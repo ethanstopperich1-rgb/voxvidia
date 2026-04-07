@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: voxvidia-bridge
+    runtime: node
+    plan: starter
+    buildCommand: npm install -g pnpm && pnpm install && pnpm build
+    startCommand: node apps/bridge/dist/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: PERSONAPLEX_WS_URL
+        sync: false
+      - key: DEFAULT_VOICE
+        value: NATF2.pt
+      - key: DEFAULT_PROMPT
+        value: "You enjoy having a good conversation."
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
