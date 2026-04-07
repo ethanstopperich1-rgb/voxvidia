@@ -10,12 +10,18 @@ importers:
 
   apps/bridge:
     dependencies:
+      '@voxvidia/orchestrator':
+        specifier: workspace:*
+        version: link:../orchestrator
       '@voxvidia/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@voxvidia/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@voxvidia/workers':
+        specifier: workspace:*
+        version: link:../workers
       esbuild:
         specifier: ^0.21.0
         version: 0.21.5

@@ -26,6 +26,13 @@ const envSchema = z.object({
   GOOGLE_REFRESH_TOKEN: z.string().optional(),
   GOOGLE_CALENDAR_ID: z.string().optional(),
 
+  // Adapter toggle
+  USE_STUB_ADAPTERS: z.string().default('true'),
+
+  // Agent identity (used in enriched outbound prompts)
+  AGENT_NAME: z.string().optional(),
+  COMPANY_NAME: z.string().optional(),
+
   // Outbound webhooks
   OUTBOUND_CRM_WEBHOOK_URL: z.string().optional(),
   OUTBOUND_ANALYTICS_WEBHOOK_URL: z.string().optional(),

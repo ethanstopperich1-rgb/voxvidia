@@ -10,6 +10,14 @@ import type { Request, Response } from 'express';
 import { createLogger, env } from '@voxvidia/shared';
 import { createCall, updateCall, completeCall } from '@voxvidia/storage';
 import { validateRequest } from 'twilio';
+import type { CrmAdapter } from '@voxvidia/orchestrator';
+import type { CalendarAdapter } from '@voxvidia/orchestrator';
+import {
+  StubCrmAdapter,
+  GhlCrmAdapter,
+  StubCalendarAdapter,
+  GoogleCalendarAdapter,
+} from '@voxvidia/orchestrator';
 
 const logger = createLogger('bridge:twilio');
 
@@ -332,6 +340,147 @@ export async function handleOutboundCall(
       error: 'Internal error initiating call',
     });
   }
+}
+
+// ── Adapter factory (env-driven) ─────────────────────────────────────────────
+
+function buildCrmAdapter(): CrmAdapter {
+  if (env.USE_STUB_ADAPTERS !== 'false' || !env.CRM_BASE_URL || !env.CRM_API_KEY) {
+    return new StubCrmAdapter();
+  }
+  return new GhlCrmAdapter({
+    baseUrl: env.CRM_BASE_URL,
+    apiKey: env.CRM_API_KEY,
+  });
+}
+
+function buildCalendarAdapter(): CalendarAdapter {
+  if (
+    env.USE_STUB_ADAPTERS !== 'false' ||
+    !env.GOOGLE_CLIENT_ID ||
+    !env.GOOGLE_CLIENT_SECRET ||
+    !env.GOOGLE_REFRESH_TOKEN
+  ) {
+    return new StubCalendarAdapter();
+  }
+  return new GoogleCalendarAdapter({
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    refreshToken: env.GOOGLE_REFRESH_TOKEN,
+    calendarId: env.GOOGLE_CALENDAR_ID,
+  });
+}
+
+// ── Enriched Outbound Call ───────────────────────────────────────────────────
+
+export interface EnrichedOutboundRequest {
+  to: string;
+  templatePrompt?: string;
+  voice?: string;
+}
+
+/**
+ * POST /api/outbound/enriched
+ *
+ * Accepts a phone number, looks up the contact in CRM, pulls today's calendar,
+ * builds a fully enriched system prompt, then initiates the outbound call via
+ * the existing Twilio flow.
+ *
+ * Degrades gracefully: if CRM or Calendar are unavailable the prompt still
+ * contains sensible defaults.
+ */
+export async function handleEnrichedOutboundCall(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const { to, templatePrompt, voice } = req.body as EnrichedOutboundRequest;
+
+  if (!to) {
+    res.status(400).json({ error: 'Missing required field: to' });
+    return;
+  }
+
+  const agentName = env.AGENT_NAME;
+  const companyName = env.COMPANY_NAME;
+
+  // ── Build adapters ──
+  const crm = buildCrmAdapter();
+  const calendar = buildCalendarAdapter();
+
+  // ── Enrich: CRM lookup ──
+  let contact: { name?: string; company?: string; id?: string } | null = null;
+  let deals: Array<{ name: string; value: number }> = [];
+
+  try {
+    contact = await crm.findContactByPhone(to);
+    if (contact?.id) {
+      const rawDeals = await crm.getOpenDeals(contact.id);
+      deals = rawDeals.map((d) => ({ name: d.name, value: d.value }));
+    }
+  } catch (err) {
+    logger.warn('CRM enrichment failed, using defaults', {
+      to,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // ── Enrich: Calendar ──
+  let events: Array<{ time: string; title: string }> = [];
+
+  try {
+    const todayEvents = await calendar.getTodayEvents();
+    events = todayEvents.map((e) => ({ time: e.startTime, title: e.summary }));
+  } catch (err) {
+    logger.warn('Calendar enrichment failed, using defaults', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // ── Build enriched prompt ──
+  const enrichedPrompt = `
+# Identity
+You are ${agentName || 'an AI assistant'} at ${companyName || 'our company'}.
+Tone: warm, concise, professional.
+Keep responses to 1-2 sentences.
+
+# Current Call Context
+Date and time: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}
+Caller name: ${contact?.name || 'Unknown'}
+Account: ${contact?.company || 'Unknown'}
+Open deals: ${deals.length > 0 ? deals.map((d) => d.name + ' - $' + d.value).join(', ') : 'None'}
+Today's meetings: ${events.length > 0 ? events.map((e) => e.time + ' - ' + e.title).join(', ') : 'None'}
+
+# Mission
+${templatePrompt || 'Help the caller with scheduling and account questions.'}
+
+# Rules
+ALWAYS:
+- Use the caller's first name after the greeting
+- Confirm before any booking or scheduling action
+- Speak numbers naturally
+
+NEVER:
+- Mention you are AI unless asked
+- Use filler phrases like "Certainly!" or "Absolutely!"
+- Make up information not in the context above
+`.trim();
+
+  logger.info('Enriched outbound prompt built', {
+    to,
+    contactFound: !!contact,
+    dealsCount: deals.length,
+    eventsCount: events.length,
+  });
+
+  // ── Delegate to the existing outbound handler by synthesizing the request ──
+  req.body = {
+    to,
+    prompt: enrichedPrompt,
+    voice: voice || env.DEFAULT_VOICE,
+    callerName: contact?.name,
+  } satisfies OutboundCallRequest;
+
+  return handleOutboundCall(req, res);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

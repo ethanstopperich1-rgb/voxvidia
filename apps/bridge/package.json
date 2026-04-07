@@ -11,8 +11,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@voxvidia/orchestrator": "workspace:*",
     "@voxvidia/shared": "workspace:*",
     "@voxvidia/storage": "workspace:*",
+    "@voxvidia/workers": "workspace:*",
     "express": "^4.21.0",
     "esbuild": "^0.21.0",
     "twilio": "^5.3.0",

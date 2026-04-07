@@ -172,144 +172,169 @@ export class GhlCrmAdapter implements CrmAdapter {
   }
 
   async findContactByPhone(phone: string): Promise<Contact | null> {
-    const digits = phone.replace(/\D/g, '');
+    try {
+      const digits = phone.replace(/\D/g, '');
 
-    interface GhlSearchResponse {
-      contacts: Array<{
-        id: string;
-        firstName?: string;
-        lastName?: string;
-        phone?: string;
-        email?: string;
-        companyName?: string;
-        tags?: string[];
-      }>;
+      interface GhlSearchResponse {
+        contacts: Array<{
+          id: string;
+          firstName?: string;
+          lastName?: string;
+          phone?: string;
+          email?: string;
+          companyName?: string;
+          tags?: string[];
+        }>;
+      }
+
+      const data = await this.request<GhlSearchResponse>(
+        `/contacts/search?query=${encodeURIComponent(digits)}&locationId=${this.locationId}`,
+      );
+
+      const match = data.contacts?.[0];
+      if (!match) return null;
+
+      return {
+        id: match.id,
+        name: [match.firstName, match.lastName].filter(Boolean).join(' ') || 'Unknown',
+        phone: match.phone,
+        email: match.email,
+        company: match.companyName,
+        tags: match.tags,
+      };
+    } catch (err) {
+      logger.error('findContactByPhone failed', { phone, error: String(err) });
+      return null;
     }
-
-    const data = await this.request<GhlSearchResponse>(
-      `/contacts/search?query=${encodeURIComponent(digits)}&locationId=${this.locationId}`,
-    );
-
-    const match = data.contacts?.[0];
-    if (!match) return null;
-
-    return {
-      id: match.id,
-      name: [match.firstName, match.lastName].filter(Boolean).join(' ') || 'Unknown',
-      phone: match.phone,
-      email: match.email,
-      company: match.companyName,
-      tags: match.tags,
-    };
   }
 
   async getAccountSummary(accountId: string): Promise<AccountSummary | null> {
-    interface GhlContactResponse {
-      contact: {
-        firstName?: string;
-        lastName?: string;
-        companyName?: string;
+    try {
+      interface GhlContactResponse {
+        contact: {
+          firstName?: string;
+          lastName?: string;
+          companyName?: string;
+        };
+      }
+
+      const contactData = await this.request<GhlContactResponse>(
+        `/contacts/${accountId}`,
+      );
+
+      interface GhlPipelineResponse {
+        opportunities: Array<{
+          status: string;
+          monetaryValue?: number;
+        }>;
+      }
+
+      const pipelineData = await this.request<GhlPipelineResponse>(
+        `/opportunities/search?contactId=${accountId}&locationId=${this.locationId}`,
+      );
+
+      const opps = pipelineData.opportunities ?? [];
+      const openOpps = opps.filter((o) => o.status === 'open');
+
+      return {
+        name: contactData.contact?.companyName
+          ?? [contactData.contact?.firstName, contactData.contact?.lastName].filter(Boolean).join(' ')
+          ?? 'Unknown',
+        totalDeals: opps.length,
+        openDeals: openOpps.length,
+        totalValue: opps.reduce((sum, o) => sum + (o.monetaryValue ?? 0), 0),
       };
+    } catch (err) {
+      logger.error('getAccountSummary failed', { accountId, error: String(err) });
+      return null;
     }
-
-    const contactData = await this.request<GhlContactResponse>(
-      `/contacts/${accountId}`,
-    );
-
-    interface GhlPipelineResponse {
-      opportunities: Array<{
-        status: string;
-        monetaryValue?: number;
-      }>;
-    }
-
-    const pipelineData = await this.request<GhlPipelineResponse>(
-      `/opportunities/search?contactId=${accountId}&locationId=${this.locationId}`,
-    );
-
-    const opps = pipelineData.opportunities ?? [];
-    const openOpps = opps.filter((o) => o.status === 'open');
-
-    return {
-      name: contactData.contact?.companyName
-        ?? [contactData.contact?.firstName, contactData.contact?.lastName].filter(Boolean).join(' ')
-        ?? 'Unknown',
-      totalDeals: opps.length,
-      openDeals: openOpps.length,
-      totalValue: opps.reduce((sum, o) => sum + (o.monetaryValue ?? 0), 0),
-    };
   }
 
   async getOpenDeals(contactId?: string): Promise<Deal[]> {
-    const query = contactId
-      ? `contactId=${contactId}&locationId=${this.locationId}&status=open`
-      : `locationId=${this.locationId}&status=open`;
+    try {
+      const query = contactId
+        ? `contactId=${contactId}&locationId=${this.locationId}&status=open`
+        : `locationId=${this.locationId}&status=open`;
 
-    interface GhlOppsResponse {
-      opportunities: Array<{
-        id: string;
-        name?: string;
-        contactName?: string;
-        monetaryValue?: number;
-        pipelineStageId?: string;
-        status: string;
-      }>;
+      interface GhlOppsResponse {
+        opportunities: Array<{
+          id: string;
+          name?: string;
+          contactName?: string;
+          monetaryValue?: number;
+          pipelineStageId?: string;
+          status: string;
+        }>;
+      }
+
+      const data = await this.request<GhlOppsResponse>(
+        `/opportunities/search?${query}`,
+      );
+
+      return (data.opportunities ?? []).map((o) => ({
+        id: o.id,
+        name: o.name ?? 'Untitled Deal',
+        company: o.contactName ?? 'Unknown',
+        value: o.monetaryValue ?? 0,
+        stage: o.pipelineStageId ?? 'Unknown',
+        status: o.status as Deal['status'],
+      }));
+    } catch (err) {
+      logger.error('getOpenDeals failed', { contactId, error: String(err) });
+      return [];
     }
-
-    const data = await this.request<GhlOppsResponse>(
-      `/opportunities/search?${query}`,
-    );
-
-    return (data.opportunities ?? []).map((o) => ({
-      id: o.id,
-      name: o.name ?? 'Untitled Deal',
-      company: o.contactName ?? 'Unknown',
-      value: o.monetaryValue ?? 0,
-      stage: o.pipelineStageId ?? 'Unknown',
-      status: o.status as Deal['status'],
-    }));
   }
 
   async createNote(contactId: string, note: string): Promise<{ id: string }> {
-    interface GhlNoteResponse {
-      id: string;
+    try {
+      interface GhlNoteResponse {
+        id: string;
+      }
+
+      const data = await this.request<GhlNoteResponse>(
+        `/contacts/${contactId}/notes`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ body: note }),
+        },
+      );
+
+      return { id: data.id };
+    } catch (err) {
+      logger.error('createNote failed', { contactId, error: String(err) });
+      return { id: '' };
     }
-
-    const data = await this.request<GhlNoteResponse>(
-      `/contacts/${contactId}/notes`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ body: note }),
-      },
-    );
-
-    return { id: data.id };
   }
 
   async createFollowupTask(
     contactId: string,
     payload: CreateFollowupPayload,
   ): Promise<{ id: string }> {
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + payload.daysOut);
+    try {
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + payload.daysOut);
 
-    interface GhlTaskResponse {
-      id: string;
+      interface GhlTaskResponse {
+        id: string;
+      }
+
+      const data = await this.request<GhlTaskResponse>(
+        `/contacts/${contactId}/tasks`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            title: `Follow-up: ${payload.description.slice(0, 80)}`,
+            body: payload.description,
+            dueDate: dueDate.toISOString(),
+            completed: false,
+          }),
+        },
+      );
+
+      return { id: data.id };
+    } catch (err) {
+      logger.error('createFollowupTask failed', { contactId, error: String(err) });
+      return { id: '' };
     }
-
-    const data = await this.request<GhlTaskResponse>(
-      `/contacts/${contactId}/tasks`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          title: `Follow-up: ${payload.description.slice(0, 80)}`,
-          body: payload.description,
-          dueDate: dueDate.toISOString(),
-          completed: false,
-        }),
-      },
-    );
-
-    return { id: data.id };
   }
 }

@@ -27,13 +27,32 @@ import {
   handleCallStatus,
   handleRecordingStatus,
   handleOutboundCall,
+  handleEnrichedOutboundCall,
   validateTwilioSignature,
 } from './twilio.js';
 import { SessionPool } from './session-pool.js';
+import { Orchestrator, IntentRouter, ToolRunner, ToolRegistry, ConfirmationPolicy } from '@voxvidia/orchestrator';
+import { StubCalendarAdapter } from '@voxvidia/orchestrator';
+import { StubCrmAdapter } from '@voxvidia/orchestrator';
+import { registerCalendarTools, registerCrmTools } from '@voxvidia/orchestrator';
+import { logOrchestratorResult } from './personaplex.js';
 
 const logger = createLogger('bridge:server');
 const sessions = new SessionManager();
 const pool = new SessionPool({ poolSize: 2 });
+
+// ── Orchestrator setup ──────────────────────────────────────────────────────
+const calendarAdapter = new StubCalendarAdapter();
+const crmAdapter = new StubCrmAdapter();
+const toolRegistry = new ToolRegistry();
+registerCalendarTools(toolRegistry, calendarAdapter);
+registerCrmTools(toolRegistry, crmAdapter);
+
+const orchestrator = new Orchestrator({
+  intentRouter: new IntentRouter(),
+  toolRunner: new ToolRunner(toolRegistry),
+  confirmationPolicy: new ConfirmationPolicy(),
+});
 
 // ── Express app ───────────────────────────────────────────────────────────────
 
@@ -89,6 +108,16 @@ app.post('/twilio/recording-status', (req, res) => {
 app.post('/api/outbound', (req, res) => {
   handleOutboundCall(req, res).catch((err) => {
     logger.error('handleOutboundCall error', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    res.status(500).json({ error: 'Internal error' });
+  });
+});
+
+// Enriched outbound call API (CRM + Calendar context injected into prompt).
+app.post('/api/outbound/enriched', (req, res) => {
+  handleEnrichedOutboundCall(req, res).catch((err) => {
+    logger.error('handleEnrichedOutboundCall error', {
       error: err instanceof Error ? err.message : String(err),
     });
     res.status(500).json({ error: 'Internal error' });
@@ -190,6 +219,21 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           warmSession.ws.on('error', (err: Error) => {
             logger.error('PersonaPlex warm session error', { callId: callSid, error: err.message });
           });
+
+          // Wire orchestrator to process completed utterances.
+          session.transcript.setOnUtterance(async (utterance: string) => {
+            try {
+              const result = await orchestrator.processUtterance(callSid, utterance);
+              if (result.action === 'speak' || result.action === 'confirm') {
+                logOrchestratorResult(callSid, result.text!);
+              }
+            } catch (err) {
+              logger.error('Orchestrator error', {
+                callId: callSid,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          });
           break;
         }
 
@@ -251,6 +295,21 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         );
 
         session.personaplexWs = ppConn.ws;
+
+        // Wire orchestrator to process completed utterances.
+        session.transcript.setOnUtterance(async (utterance: string) => {
+          try {
+            const result = await orchestrator.processUtterance(callSid, utterance);
+            if (result.action === 'speak' || result.action === 'confirm') {
+              logOrchestratorResult(callSid, result.text!);
+            }
+          } catch (err) {
+            logger.error('Orchestrator error', {
+              callId: callSid,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        });
         break;
       }
 
@@ -309,6 +368,21 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             }
           }
           sessions.end(callSid);
+
+          // Clean up orchestrator per-call state.
+          orchestrator.endCall(callSid);
+
+          // Trigger post-call analysis asynchronously.
+          import('@voxvidia/workers').then(({ processPostCall }) => {
+            processPostCall(callSid).catch((err) => {
+              logger.error('Post-call worker error', {
+                callId: callSid,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
+          }).catch(() => {
+            logger.warn('Workers package not available, skipping post-call analysis', { callId: callSid });
+          });
         }
         break;
       }

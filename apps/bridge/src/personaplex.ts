@@ -193,3 +193,14 @@ export function connectToPersonaPlex(
 
   return { ws, sendAudio, sendRawPcm, close, isReady };
 }
+
+/**
+ * Log orchestrator context for observability.
+ * PersonaPlex doesn't support mid-session text injection via WebSocket.
+ * Tool results are logged and will be used in post-call analysis.
+ * For real-time tool result delivery, a future version could use
+ * TTS to speak the result directly to Twilio while PersonaPlex continues.
+ */
+export function logOrchestratorResult(callId: string, text: string): void {
+  logger.info('Orchestrator result', { callId, text });
+}

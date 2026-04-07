@@ -14,9 +14,19 @@ export class TranscriptAccumulator {
   private buffer = '';
   private utterances: Utterance[] = [];
   private lastTokenTimestamp = 0;
+  private onUtteranceCb?: (text: string) => void;
 
   /** Silence threshold in ms — if no token arrives for this long, auto-flush. */
   private static readonly SILENCE_THRESHOLD_MS = 1500;
+
+  constructor(opts?: { onUtterance?: (text: string) => void }) {
+    this.onUtteranceCb = opts?.onUtterance;
+  }
+
+  /** Set or replace the utterance callback (allows wiring after construction). */
+  setOnUtterance(cb: (text: string) => void): void {
+    this.onUtteranceCb = cb;
+  }
 
   /**
    * Append a text token to the buffer.
@@ -52,6 +62,11 @@ export class TranscriptAccumulator {
     });
 
     this.buffer = '';
+
+    // Notify listener of completed utterance.
+    if (this.onUtteranceCb) {
+      this.onUtteranceCb(trimmed);
+    }
   }
 
   /** Return the full transcript (all flushed utterances joined). */
