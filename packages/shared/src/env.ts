@@ -5,7 +5,7 @@ const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
   PERSONAPLEX_WS_URL: z.string().default('ws://localhost:8998/api/chat'),
   DEFAULT_VOICE: z.string().default('NATF2.pt'),
-  DEFAULT_PROMPT: z.string().default('You enjoy having a good conversation.'),
+  DEFAULT_PROMPT: z.string().default('You enjoy having a good conversation. You are friendly and helpful.'),
 
   // Twilio
   TWILIO_ACCOUNT_SID: z.string().optional(),

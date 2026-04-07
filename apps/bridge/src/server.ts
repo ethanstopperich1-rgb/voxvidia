@@ -20,7 +20,8 @@ import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createLogger, env } from '@voxvidia/shared';
 import { SessionManager } from './session.js';
-import { decodeMulaw, resample, pcmToBuffer } from './audio.js';
+import { decodeMulaw, encodeMulaw, resample, pcmToBuffer } from './audio.js';
+import { createOpusDecoder } from './opus-decoder.js';
 import { connectToPersonaPlex } from './personaplex.js';
 import {
   handleIncomingCall,
@@ -40,6 +41,7 @@ import { logOrchestratorResult } from './personaplex.js';
 const logger = createLogger('bridge:server');
 const sessions = new SessionManager();
 const pool = new SessionPool({ poolSize: 2 });
+const opusDecoder = createOpusDecoder();
 
 // ── Orchestrator setup ──────────────────────────────────────────────────────
 const calendarAdapter = new StubCalendarAdapter();
@@ -53,6 +55,30 @@ const orchestrator = new Orchestrator({
   toolRunner: new ToolRunner(toolRegistry),
   confirmationPolicy: new ConfirmationPolicy(),
 });
+
+// ── Opus decoder → Twilio audio return path ─────────────────────────────────
+// When the decoder produces PCM at 24kHz, downsample to 8kHz, encode mulaw,
+// and send to ALL active Twilio streams.
+opusDecoder.onDecodedPcm((pcm24k: Int16Array) => {
+  const pcm8k = resample(pcm24k, 24000, 8000);
+  const mulawBuf = encodeMulaw(pcm8k);
+  const payload = mulawBuf.toString('base64');
+
+  // Send to all active Twilio WebSocket connections
+  for (const [sid, ws] of twilioWsMap.entries()) {
+    const session = sessions.getByStreamSid?.(sid) ?? [...sessions.all()].find(s => s.streamSid === sid);
+    if (session && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        event: 'media',
+        streamSid: sid,
+        media: { payload },
+      }));
+    }
+  }
+});
+
+// Track Twilio WebSocket per session for audio return.
+const twilioWsMap = new Map<string, WebSocket>();
 
 // ── Express app ───────────────────────────────────────────────────────────────
 
@@ -181,6 +207,7 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           textPrompt,
         );
         session.streamSid = streamSid;
+        twilioWsMap.set(streamSid, twilioWs);
 
         // Try to acquire a pre-warmed session from the pool first.
         const warmSession = pool.acquire();
@@ -203,8 +230,11 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             if (buf.length === 0) return;
             const kind = buf[0];
             if (kind === 0x01) {
-              // Audio from PersonaPlex — Phase 2 return path
-              logger.debug('Received PersonaPlex audio', { callId: callSid, bytes: buf.length - 1 });
+              // Audio from PersonaPlex — decode Opus, downsample, encode mulaw, send to Twilio
+              const opusData = buf.subarray(1);
+              if (opusDecoder.isRunning && session.streamSid) {
+                opusDecoder.decode(opusData);
+              }
             }
             if (kind === 0x02) {
               const text = buf.subarray(1).toString('utf8');
@@ -249,24 +279,10 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             },
 
             onAudio: (opusData: Buffer) => {
-              // Phase 2: Decode Opus -> downsample 24k->8k -> encode mu-law -> send to Twilio.
-              // For now, log that we received audio and its size.
-              logger.debug('Received PersonaPlex audio', {
-                callId: callSid,
-                bytes: opusData.length,
-              });
-
-              // Placeholder for Phase 2 return audio path:
-              // 1. Decode Opus to 24kHz PCM (requires Opus decoder / sidecar)
-              // 2. const pcm8k = resample(pcm24k, 24000, 8000);
-              // 3. const mulawBuf = encodeMulaw(pcm8k);
-              // 4. const payload = mulawBuf.toString('base64');
-              // 5. Send to Twilio:
-              //    twilioWs.send(JSON.stringify({
-              //      event: 'media',
-              //      streamSid: session.streamSid,
-              //      media: { payload },
-              //    }));
+              // Decode Opus, downsample 24k->8k, encode mulaw, send to Twilio
+              if (opusDecoder.isRunning && session.streamSid) {
+                opusDecoder.decode(opusData);
+              }
             },
 
             onText: (text: string) => {
@@ -356,6 +372,9 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
 
         if (callSid) {
           const session = sessions.get(callSid);
+          if (session?.streamSid) {
+            twilioWsMap.delete(session.streamSid);
+          }
           if (session) {
             // Flush any remaining transcript text.
             session.transcript.flush();
@@ -475,8 +494,9 @@ process.on('unhandledRejection', (reason: unknown) => {
 const shutdown = (signal: string) => {
   logger.info(`Received ${signal}, shutting down gracefully`);
 
-  // Shut down session pool.
+  // Shut down session pool and opus decoder.
   pool.shutdown();
+  opusDecoder.stop();
 
   // Close all active PersonaPlex connections.
   for (const session of sessions.all()) {
