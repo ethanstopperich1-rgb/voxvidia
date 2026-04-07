@@ -181,6 +181,159 @@ export async function handleRecordingStatus(
   res.sendStatus(204);
 }
 
+// ── Outbound call handler ────────────────────────────────────────────────────
+
+export interface OutboundCallRequest {
+  to: string;
+  from?: string;
+  prompt: string;
+  voice?: string;
+  callerName?: string;
+  metadata?: Record<string, string>;
+}
+
+/**
+ * POST /api/outbound
+ *
+ * Initiate an outbound call with a fully personalized PersonaPlex agent.
+ * All dynamic variables (name, context, instructions) are baked into the prompt.
+ *
+ * Example:
+ *   POST /api/outbound
+ *   {
+ *     "to": "+15551234567",
+ *     "prompt": "You work for Fresh Cuts. You are calling Marcus. He missed his fade appointment yesterday. Offer to reschedule.",
+ *     "voice": "NATF2.pt",
+ *     "callerName": "Marcus Johnson"
+ *   }
+ */
+export async function handleOutboundCall(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const {
+    to,
+    from,
+    prompt,
+    voice,
+    callerName,
+    metadata,
+  } = req.body as OutboundCallRequest;
+
+  if (!to || !prompt) {
+    res.status(400).json({ error: 'Missing required fields: to, prompt' });
+    return;
+  }
+
+  const fromNumber = from || env.TWILIO_FROM_NUMBER || '';
+  const voicePrompt = voice || env.DEFAULT_VOICE;
+
+  if (!fromNumber) {
+    res.status(400).json({ error: 'No "from" number provided and TWILIO_FROM_NUMBER not set' });
+    return;
+  }
+
+  const accountSid = env.TWILIO_ACCOUNT_SID;
+  const authToken = env.TWILIO_AUTH_TOKEN;
+
+  if (!accountSid || !authToken) {
+    res.status(500).json({ error: 'Twilio credentials not configured' });
+    return;
+  }
+
+  logger.info('Initiating outbound call', {
+    to,
+    from: fromNumber,
+    voice: voicePrompt,
+    callerName,
+  });
+
+  // Build the stream URL — Twilio will connect here after the call is answered.
+  const host = req.headers.host || 'localhost:3000';
+  const protocol = req.headers['x-forwarded-proto'] === 'https' ? 'wss' : 'ws';
+  const wsUrl = `${protocol}://${host}/media-stream`;
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Connect><Stream url="${escapeXml(wsUrl)}"><Parameter name="voice" value="${escapeXml(voicePrompt)}"/><Parameter name="prompt" value="${escapeXml(prompt)}"/></Stream></Connect></Response>`;
+
+  try {
+    // Use Twilio REST API to create the outbound call.
+    const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    const twilioRes = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls.json`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${basicAuth}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          To: to,
+          From: fromNumber,
+          Twiml: twiml,
+          StatusCallback: `https://${host}/twilio/status`,
+          StatusCallbackMethod: 'POST',
+          StatusCallbackEvent: 'initiated ringing answered completed',
+        }),
+      },
+    );
+
+    const callData = await twilioRes.json() as Record<string, unknown>;
+
+    if (!twilioRes.ok) {
+      logger.error('Twilio outbound call failed', {
+        status: twilioRes.status,
+        error: callData,
+      });
+      res.status(twilioRes.status).json({
+        error: 'Failed to initiate call',
+        details: callData,
+      });
+      return;
+    }
+
+    const callSid = callData.sid as string;
+
+    logger.info('Outbound call initiated', {
+      callId: callSid,
+      to,
+      from: fromNumber,
+      callerName,
+    });
+
+    // Persist call record.
+    try {
+      await createCall({
+        callSid,
+        fromNumber,
+        toNumber: to,
+        status: 'initiated',
+        startedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.error('Failed to persist outbound call record', {
+        callId: callSid,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    res.json({
+      success: true,
+      callSid,
+      to,
+      from: fromNumber,
+      voice: voicePrompt,
+      callerName,
+    });
+  } catch (err) {
+    logger.error('Outbound call error', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    res.status(500).json({
+      error: 'Internal error initiating call',
+    });
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function escapeXml(str: string): string {

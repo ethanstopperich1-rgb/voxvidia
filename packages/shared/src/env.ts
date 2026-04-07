@@ -10,6 +10,7 @@ const envSchema = z.object({
   // Twilio
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_FROM_NUMBER: z.string().optional(),
 
   // Supabase
   SUPABASE_URL: z.string().optional(),

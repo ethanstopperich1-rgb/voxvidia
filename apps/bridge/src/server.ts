@@ -26,6 +26,7 @@ import {
   handleIncomingCall,
   handleCallStatus,
   handleRecordingStatus,
+  handleOutboundCall,
   validateTwilioSignature,
 } from './twilio.js';
 import { SessionPool } from './session-pool.js';
@@ -81,6 +82,16 @@ app.post('/twilio/recording-status', (req, res) => {
       error: err instanceof Error ? err.message : String(err),
     });
     res.sendStatus(500);
+  });
+});
+
+// Outbound call API.
+app.post('/api/outbound', (req, res) => {
+  handleOutboundCall(req, res).catch((err) => {
+    logger.error('handleOutboundCall error', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    res.status(500).json({ error: 'Internal error' });
   });
 });
 
