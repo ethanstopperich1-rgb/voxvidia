@@ -28,9 +28,11 @@ import {
   handleRecordingStatus,
   validateTwilioSignature,
 } from './twilio.js';
+import { SessionPool } from './session-pool.js';
 
 const logger = createLogger('bridge:server');
 const sessions = new SessionManager();
+const pool = new SessionPool({ poolSize: 2 });
 
 // ── Express app ───────────────────────────────────────────────────────────────
 
@@ -43,6 +45,7 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     activeCalls: sessions.count,
+    pool: pool.status(),
     uptime: process.uptime(),
     personaplexTarget: env.PERSONAPLEX_WS_URL,
   });
@@ -139,14 +142,55 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         );
         session.streamSid = streamSid;
 
-        // Connect to PersonaPlex.
+        // Try to acquire a pre-warmed session from the pool first.
+        const warmSession = pool.acquire();
+        if (warmSession) {
+          logger.info('Using pre-warmed PersonaPlex session', {
+            callId: callSid,
+            sessionId: warmSession.id,
+          });
+          session.personaplexWs = warmSession.ws;
+          session.handshakeReceived = true; // Already handshaked
+
+          // Wire up message handler on the warm session's WS
+          warmSession.ws.removeAllListeners('message');
+          warmSession.ws.on('message', (data: WebSocket.RawData) => {
+            let buf: Buffer;
+            if (Buffer.isBuffer(data)) buf = data;
+            else if (data instanceof ArrayBuffer) buf = Buffer.from(data);
+            else if (Array.isArray(data)) buf = Buffer.concat(data);
+            else return;
+            if (buf.length === 0) return;
+            const kind = buf[0];
+            if (kind === 0x01) {
+              // Audio from PersonaPlex — Phase 2 return path
+              logger.debug('Received PersonaPlex audio', { callId: callSid, bytes: buf.length - 1 });
+            }
+            if (kind === 0x02) {
+              const text = buf.subarray(1).toString('utf8');
+              session.transcript.onToken(text);
+              logger.debug('PersonaPlex text token', { callId: callSid, text });
+            }
+          });
+          warmSession.ws.on('close', () => {
+            session.handshakeReceived = false;
+            logger.info('PersonaPlex warm session closed', { callId: callSid });
+          });
+          warmSession.ws.on('error', (err: Error) => {
+            logger.error('PersonaPlex warm session error', { callId: callSid, error: err.message });
+          });
+          break;
+        }
+
+        // No warm session available — cold start (fallback).
+        logger.info('No warm session available, cold-starting PersonaPlex', { callId: callSid });
         const ppConn = connectToPersonaPlex(
           voicePrompt,
           textPrompt,
           {
             onHandshake: () => {
               session.handshakeReceived = true;
-              logger.info('PersonaPlex ready for audio', { callId: callSid });
+              logger.info('PersonaPlex ready for audio (cold start)', { callId: callSid });
             },
 
             onAudio: (opusData: Buffer) => {
@@ -315,9 +359,13 @@ const PORT = env.PORT;
 server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Twilio-PersonaPlex bridge running on port ${PORT}`);
   logger.info(`PersonaPlex target: ${env.PERSONAPLEX_WS_URL}`);
-  logger.info(
-    `Configure Twilio webhook: POST https://<your-domain>/twilio/voice`,
-  );
+
+  // Start pre-warming PersonaPlex sessions.
+  pool.start().catch((err) => {
+    logger.error('Failed to start session pool', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
 });
 
 // ── Process error handlers ────────────────────────────────────────────────────
@@ -341,6 +389,9 @@ process.on('unhandledRejection', (reason: unknown) => {
 // Graceful shutdown.
 const shutdown = (signal: string) => {
   logger.info(`Received ${signal}, shutting down gracefully`);
+
+  // Shut down session pool.
+  pool.shutdown();
 
   // Close all active PersonaPlex connections.
   for (const session of sessions.all()) {

@@ -79,12 +79,12 @@ export async function handleIncomingCall(
   const voicePrompt = env.DEFAULT_VOICE;
   const textPrompt = env.DEFAULT_PROMPT;
 
-  // Return TwiML.
+  // Return TwiML — no greeting, stream connects immediately.
+  // The session pool ensures PersonaPlex is pre-warmed and ready.
   res.type('text/xml');
   res.send(
     `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Please hold while I connect you.</Say>
   <Connect>
     <Stream url="${escapeXml(wsUrl)}">
       <Parameter name="voice" value="${escapeXml(voicePrompt)}" />
