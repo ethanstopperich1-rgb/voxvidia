@@ -1,28 +1,35 @@
 /**
  * Voxvidia Bridge Server
  *
- * Twilio Media Streams  <-->  PersonaPlex WebSocket
+ * Twilio Media Streams  <-->  Deepgram STT + GPT-4.1 mini + Rime TTS
  *
  * Audio flow (inbound voice):
- *   Twilio (8 kHz mu-law base64) -> decode mu-law -> upsample 8k->24k PCM
- *     -> send to PersonaPlex (raw PCM with 0x10 marker for Opus sidecar)
+ *   Twilio (8 kHz mu-law base64) -> decode mu-law -> upsample 8k->16k PCM
+ *     -> send to Deepgram Nova-3 (16 kHz linear16)
  *
- * Audio flow (AI response - Phase 2):
- *   PersonaPlex (Opus 24 kHz) -> decode Opus -> downsample 24k->8k
- *     -> encode mu-law -> base64 -> send to Twilio
+ * Audio flow (AI response):
+ *   GPT-4.1 mini text tokens -> Rime Mist v3 (mulaw 8kHz)
+ *     -> send directly to Twilio (zero transcoding)
  *
  * Text flow:
- *   PersonaPlex streams text tokens (0x02) -> accumulated in TranscriptAccumulator
+ *   Deepgram final transcripts -> GPT-4.1 mini -> streamed tokens
+ *     -> sentence-chunked to Rime TTS
  */
 
 import http from 'node:http';
 import express from 'express';
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { createLogger, env } from '@voxvidia/shared';
 import { SessionManager } from './session.js';
-import { decodeMulaw, encodeMulaw, resample, pcmToBuffer } from './audio.js';
-import { createOpusDecoder } from './opus-decoder.js';
-import { connectToPersonaPlex } from './personaplex.js';
+import { decodeMulaw, resample, pcmToBuffer } from './audio.js';
+import { createDeepgramConnection } from './deepgram.js';
+import { createRimeConnection, chunkTextForTTS } from './rime.js';
+import {
+  streamChatCompletion,
+  buildSystemPrompt,
+  getFillerPhrase,
+} from './llm.js';
+import type { ChatMessage, ToolCall } from './llm.js';
 import {
   handleIncomingCall,
   handleCallStatus,
@@ -31,66 +38,28 @@ import {
   handleEnrichedOutboundCall,
   validateTwilioSignature,
 } from './twilio.js';
-import { SessionPool } from './session-pool.js';
 import { Orchestrator, IntentRouter, ToolRunner, ToolRegistry, ConfirmationPolicy } from '@voxvidia/orchestrator';
 import { StubCalendarAdapter } from '@voxvidia/orchestrator';
 import { StubCrmAdapter } from '@voxvidia/orchestrator';
 import { registerCalendarTools, registerCrmTools } from '@voxvidia/orchestrator';
-import { logOrchestratorResult } from './personaplex.js';
 
 const logger = createLogger('bridge:server');
 const sessions = new SessionManager();
-// Pool size from env (default 0 on starter plan to avoid OOM, increase to 1-2 on standard plan)
-const POOL_SIZE = parseInt(process.env.POOL_SIZE || '0', 10);
-const pool = new SessionPool({ poolSize: POOL_SIZE });
-// Lazy-init Opus decoder on first audio to save memory on startup
-let opusDecoder: ReturnType<typeof createOpusDecoder> | null = null;
-function getOpusDecoder() {
-  if (!opusDecoder) {
-    opusDecoder = createOpusDecoder();
-  }
-  return opusDecoder;
-}
 
-// ── Orchestrator setup ──────────────────────────────────────────────────────
+// ── Orchestrator + Tool Runner setup ────────────────────────────────────────
 const calendarAdapter = new StubCalendarAdapter();
 const crmAdapter = new StubCrmAdapter();
 const toolRegistry = new ToolRegistry();
 registerCalendarTools(toolRegistry, calendarAdapter);
 registerCrmTools(toolRegistry, crmAdapter);
 
+const toolRunner = new ToolRunner(toolRegistry);
+
 const orchestrator = new Orchestrator({
   intentRouter: new IntentRouter(),
-  toolRunner: new ToolRunner(toolRegistry),
+  toolRunner,
   confirmationPolicy: new ConfirmationPolicy(),
 });
-
-// ── Opus decoder → Twilio audio return path ─────────────────────────────────
-// Registered lazily on first call to avoid OOM on startup.
-let opusCallbackRegistered = false;
-function ensureOpusCallback() {
-  if (opusCallbackRegistered) return;
-  opusCallbackRegistered = true;
-  getOpusDecoder().onDecodedPcm((pcm24k: Int16Array) => {
-    const pcm8k = resample(pcm24k, 24000, 8000);
-    const mulawBuf = encodeMulaw(pcm8k);
-    const payload = mulawBuf.toString('base64');
-
-    for (const [sid, ws] of twilioWsMap.entries()) {
-      const session = [...sessions.all()].find(s => s.streamSid === sid);
-      if (session && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          event: 'media',
-          streamSid: sid,
-          media: { payload },
-        }));
-      }
-    }
-  });
-}
-
-// Track Twilio WebSocket per session for audio return.
-const twilioWsMap = new Map<string, WebSocket>();
 
 // ── Express app ───────────────────────────────────────────────────────────────
 
@@ -103,9 +72,8 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     activeCalls: sessions.count,
-    pool: pool.status(),
     uptime: process.uptime(),
-    personaplexTarget: env.PERSONAPLEX_WS_URL,
+    stack: 'deepgram-nova3 + gpt-4.1-mini + rime-mistv3',
   });
 });
 
@@ -181,9 +149,9 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
   logger.info('Twilio Media Stream WebSocket connected');
 
   // These will be populated by the "start" event.
-  let callSid: string | null = undefined;
+  let callSid: string | undefined = undefined;
 
-  twilioWs.on('message', (raw: WebSocket.RawData) => {
+  twilioWs.on('message', (raw: RawData) => {
     let msg: TwilioMediaMessage;
     try {
       msg = JSON.parse(raw.toString());
@@ -198,6 +166,8 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         const startData = msg.start!;
         callSid = startData.callSid;
         const streamSid = startData.streamSid;
+        const fromNumber = startData.customParameters?.from || 'unknown';
+        const toNumber = startData.customParameters?.to || 'unknown';
 
         const voicePrompt =
           startData.customParameters?.voice || env.DEFAULT_VOICE;
@@ -210,127 +180,195 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           voicePrompt,
         });
 
-        // Create session.
+        // 1. Create session
         const session = sessions.create(
           callSid,
-          startData.customParameters?.from || 'unknown',
-          startData.customParameters?.to || 'unknown',
+          fromNumber,
+          toNumber,
           voicePrompt,
           textPrompt,
         );
         session.streamSid = streamSid;
-        twilioWsMap.set(streamSid, twilioWs);
-        ensureOpusCallback();
 
-        // Try to acquire a pre-warmed session from the pool first.
-        const warmSession = pool.acquire();
-        if (warmSession) {
-          logger.info('Using pre-warmed PersonaPlex session', {
-            callId: callSid,
-            sessionId: warmSession.id,
-          });
-          session.personaplexWs = warmSession.ws;
-          session.handshakeReceived = true; // Already handshaked
+        // 2. Build system prompt
+        const systemPrompt = buildSystemPrompt({
+          agentName: env.AGENT_NAME,
+          companyName: env.COMPANY_NAME,
+          customPrompt: textPrompt !== 'default' ? textPrompt : undefined,
+          callerPhone: fromNumber,
+          currentDateTime: new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }),
+        });
 
-          // Wire up message handler on the warm session's WS
-          warmSession.ws.removeAllListeners('message');
-          warmSession.ws.on('message', (data: WebSocket.RawData) => {
-            let buf: Buffer;
-            if (Buffer.isBuffer(data)) buf = data;
-            else if (data instanceof ArrayBuffer) buf = Buffer.from(data);
-            else if (Array.isArray(data)) buf = Buffer.concat(data);
-            else return;
-            if (buf.length === 0) return;
-            const kind = buf[0];
-            if (kind === 0x01) {
-              // Audio from PersonaPlex — decode Opus, downsample, encode mulaw, send to Twilio
-              const opusData = buf.subarray(1);
-              if (getOpusDecoder().isRunning && session.streamSid) {
-                getOpusDecoder().decode(opusData);
-              }
+        // 3. Initialize conversation messages
+        session.llmMessages = [{ role: 'system', content: systemPrompt }];
+
+        // 4. Connect to Rime TTS
+        const rimeConn = createRimeConnection(env.RIME_API_KEY || '', env.RIME_VOICE, {
+          onAudio: (mulawBuffer) => {
+            // Send mulaw audio DIRECTLY to Twilio — no transcoding!
+            if (twilioWs.readyState === WebSocket.OPEN && session.streamSid) {
+              twilioWs.send(JSON.stringify({
+                event: 'media',
+                streamSid: session.streamSid,
+                media: { payload: mulawBuffer.toString('base64') },
+              }));
             }
-            if (kind === 0x02) {
-              const text = buf.subarray(1).toString('utf8');
-              session.transcript.onToken(text);
-              logger.debug('PersonaPlex text token', { callId: callSid, text });
-            }
-          });
-          warmSession.ws.on('close', () => {
-            session.handshakeReceived = false;
-            logger.info('PersonaPlex warm session closed', { callId: callSid });
-          });
-          warmSession.ws.on('error', (err: Error) => {
-            logger.error('PersonaPlex warm session error', { callId: callSid, error: err.message });
-          });
-
-          // Wire orchestrator to process completed utterances.
-          session.transcript.setOnUtterance(async (utterance: string) => {
-            try {
-              const result = await orchestrator.processUtterance(callSid, utterance);
-              if (result.action === 'speak' || result.action === 'confirm') {
-                logOrchestratorResult(callSid, result.text!);
-              }
-            } catch (err) {
-              logger.error('Orchestrator error', {
-                callId: callSid,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          });
-          break;
-        }
-
-        // No warm session available — cold start (fallback).
-        logger.info('No warm session available, cold-starting PersonaPlex', { callId: callSid });
-        const ppConn = connectToPersonaPlex(
-          voicePrompt,
-          textPrompt,
-          {
-            onHandshake: () => {
-              session.handshakeReceived = true;
-              logger.info('PersonaPlex ready for audio (cold start)', { callId: callSid });
-            },
-
-            onAudio: (opusData: Buffer) => {
-              // Decode Opus, downsample 24k->8k, encode mulaw, send to Twilio
-              if (getOpusDecoder().isRunning && session.streamSid) {
-                getOpusDecoder().decode(opusData);
-              }
-            },
-
-            onText: (text: string) => {
-              session.transcript.onToken(text);
-              logger.debug('PersonaPlex text token', {
-                callId: callSid,
-                text,
-              });
-            },
-
-            onClose: () => {
-              session.handshakeReceived = false;
-              logger.info('PersonaPlex connection closed', {
-                callId: callSid,
-              });
-            },
-
-            onError: (err: Error) => {
-              logger.error('PersonaPlex connection error', {
-                callId: callSid,
-                error: err.message,
-              });
-            },
           },
-          callSid,
-        );
+          onDone: () => {
+            session.rimeIsSpeaking = false;
+          },
+          onError: (err) => {
+            logger.error('Rime error', { callId: callSid, error: err.message });
+          },
+          onClose: () => {
+            logger.info('Rime closed', { callId: callSid });
+          },
+        }, callSid!);
+        session.rimeConn = rimeConn;
 
-        session.personaplexWs = ppConn.ws;
+        // 5. Function to send LLM response text to Rime TTS
+        const speakText = (text: string) => {
+          const chunks = chunkTextForTTS(text);
+          for (const chunk of chunks) {
+            rimeConn.speak(chunk);
+          }
+          session.rimeIsSpeaking = true;
+        };
+
+        // 6. Function to handle LLM tool calls
+        const handleToolCall = async (toolCall: ToolCall) => {
+          const toolName = toolCall.function.name;
+          const filler = getFillerPhrase(toolName);
+
+          // Speak filler phrase while tool executes
+          speakText(filler);
+
+          let args: Record<string, any>;
+          try {
+            args = JSON.parse(toolCall.function.arguments);
+          } catch {
+            args = {};
+          }
+
+          // Execute tool via orchestrator
+          try {
+            const result = await toolRunner.runTool(toolName, args);
+
+            // Add tool call + result to conversation
+            session.llmMessages.push({
+              role: 'assistant',
+              content: null,
+              tool_calls: [toolCall],
+            });
+            session.llmMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: JSON.stringify(result),
+            });
+
+            // Get LLM to formulate response with tool result
+            await streamChatCompletion(env.OPENAI_API_KEY || '', session.llmMessages, {
+              onToken: (token) => {
+                // Tokens are buffered by the onDone handler below;
+                // sentence-level streaming is handled in the primary onTranscript path.
+              },
+              onToolCall: (tc) => {
+                handleToolCall(tc);
+              },
+              onDone: (text) => {
+                speakText(text);
+                session.llmMessages.push({ role: 'assistant', content: text });
+              },
+              onError: (err) => {
+                logger.error('LLM error after tool', { callId: callSid, error: err.message });
+              },
+            }, callSid!);
+          } catch (err) {
+            logger.error('Tool execution error', {
+              callId: callSid,
+              tool: toolName,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            speakText("I'm sorry, I'm having a little trouble with that. Let me connect you with our team.");
+          }
+        };
+
+        // 7. Connect to Deepgram STT
+        const deepgramConn = createDeepgramConnection(env.DEEPGRAM_API_KEY || '', {
+          onTranscript: async (text, isFinal) => {
+            if (!isFinal) return;
+
+            session.transcript.onToken(text);
+            logger.info('Caller said', { callId: callSid, text });
+
+            // Add caller message to conversation
+            session.llmMessages.push({ role: 'user', content: text });
+
+            // Get LLM response
+            let responseBuffer = '';
+            await streamChatCompletion(env.OPENAI_API_KEY || '', session.llmMessages, {
+              onToken: (token) => {
+                responseBuffer += token;
+                // Send complete sentences to Rime for synthesis
+                const sentences = responseBuffer.match(/[^.!?]+[.!?]+/g);
+                if (sentences) {
+                  for (const s of sentences) {
+                    rimeConn.speak(s.trim());
+                  }
+                  // Keep any incomplete sentence in buffer
+                  const lastDot = responseBuffer.lastIndexOf('.');
+                  const lastBang = responseBuffer.lastIndexOf('!');
+                  const lastQ = responseBuffer.lastIndexOf('?');
+                  const lastPunct = Math.max(lastDot, lastBang, lastQ);
+                  if (lastPunct > -1) {
+                    responseBuffer = responseBuffer.substring(lastPunct + 1);
+                  }
+                }
+                session.rimeIsSpeaking = true;
+              },
+              onToolCall: handleToolCall,
+              onDone: (fullText) => {
+                // Send any remaining text
+                if (responseBuffer.trim().length > 0) {
+                  rimeConn.speak(responseBuffer.trim());
+                }
+                session.llmMessages.push({ role: 'assistant', content: fullText });
+                logger.info('Agent said', { callId: callSid, text: fullText });
+              },
+              onError: (err) => {
+                logger.error('LLM error', { callId: callSid, error: err.message });
+                speakText("I'm sorry, could you say that again?");
+              },
+            }, callSid!);
+          },
+          onInterim: (text) => {
+            // Barge-in detection: caller is speaking while AI is talking
+            if (session.rimeIsSpeaking && text.length > 3) {
+              rimeConn.clear();
+              session.rimeIsSpeaking = false;
+              logger.info('Barge-in detected', { callId: callSid, interim: text });
+            }
+          },
+          onUtteranceEnd: () => {
+            session.transcript.flush();
+          },
+          onError: (err) => {
+            logger.error('Deepgram error', { callId: callSid, error: err.message });
+          },
+          onClose: () => {
+            logger.info('Deepgram closed', { callId: callSid });
+          },
+        }, callSid!);
+        session.deepgramConn = deepgramConn;
 
         // Wire orchestrator to process completed utterances.
         session.transcript.setOnUtterance(async (utterance: string) => {
           try {
-            const result = await orchestrator.processUtterance(callSid, utterance);
+            const result = await orchestrator.processUtterance(callSid!, utterance);
             if (result.action === 'speak' || result.action === 'confirm') {
-              logOrchestratorResult(callSid, result.text!);
+              // In the new pipeline, orchestrator results are informational.
+              // The LLM handles actual response generation via tool calls.
+              logger.debug('Orchestrator result', { callId: callSid, action: result.action, text: result.text });
             }
           } catch (err) {
             logger.error('Orchestrator error', {
@@ -339,6 +377,28 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             });
           }
         });
+
+        // 8. Generate AI greeting
+        const greetingPrompt = session.llmMessages.slice(); // Copy messages
+        streamChatCompletion(env.OPENAI_API_KEY || '', greetingPrompt, {
+          onToken: () => {},
+          onToolCall: handleToolCall,
+          onDone: (greeting) => {
+            speakText(greeting);
+            session.llmMessages.push({ role: 'assistant', content: greeting });
+            logger.info('AI greeting', { callId: callSid, text: greeting });
+          },
+          onError: () => {
+            speakText("Hi, thanks for calling. How can I help you today?");
+          },
+        }, callSid!).catch((err) => {
+          logger.error('Greeting generation error', {
+            callId: callSid,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          speakText("Hi, thanks for calling. How can I help you today?");
+        });
+
         break;
       }
 
@@ -346,36 +406,14 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
       case 'media': {
         if (!callSid) return;
         const session = sessions.get(callSid);
-        if (
-          !session ||
-          !session.personaplexWs ||
-          session.personaplexWs.readyState !== WebSocket.OPEN ||
-          !session.handshakeReceived
-        ) {
-          return;
-        }
+        if (!session?.deepgramConn?.isReady()) return;
 
         const payload = msg.media!.payload;
-
-        // Decode base64 mu-law from Twilio.
         const mulawBytes = Buffer.from(payload, 'base64');
-
-        // Mu-law -> 16-bit signed PCM at 8 kHz.
         const pcm8k = decodeMulaw(mulawBytes);
-
-        // Upsample 8 kHz -> 24 kHz (PersonaPlex native rate).
-        const pcm24k = resample(pcm8k, 8000, 24000);
-
-        // Convert PCM Int16Array to a byte buffer (little-endian).
-        const pcmBuffer = pcmToBuffer(pcm24k);
-
-        // Send raw PCM with the 0x10 custom marker.
-        // The Python Opus sidecar (or PersonaPlex directly) handles encoding.
-        const frame = Buffer.alloc(1 + pcmBuffer.length);
-        frame[0] = 0x10; // PP_RAW_PCM
-        pcmBuffer.copy(frame, 1);
-        session.personaplexWs.send(frame);
-
+        const pcm16k = resample(pcm8k, 8000, 16000);
+        const pcmBuffer = pcmToBuffer(pcm16k);
+        session.deepgramConn.send(pcmBuffer);
         break;
       }
 
@@ -385,18 +423,13 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
 
         if (callSid) {
           const session = sessions.get(callSid);
-          if (session?.streamSid) {
-            twilioWsMap.delete(session.streamSid);
-          }
           if (session) {
-            // Flush any remaining transcript text.
+            session.deepgramConn?.close();
+            session.rimeConn?.close();
             session.transcript.flush();
-            const fullTranscript = session.transcript.getFullTranscript();
-            if (fullTranscript.length > 0) {
-              logger.info('Final transcript', {
-                callId: callSid,
-                transcript: fullTranscript,
-              });
+            const transcript = session.transcript.getFullTranscript();
+            if (transcript.length > 0) {
+              logger.info('Final transcript', { callId: callSid, transcript });
             }
           }
           sessions.end(callSid);
@@ -474,15 +507,8 @@ interface TwilioMediaMessage {
 const PORT = env.PORT;
 
 server.listen(PORT, '0.0.0.0', () => {
-  logger.info(`Twilio-PersonaPlex bridge running on port ${PORT}`);
-  logger.info(`PersonaPlex target: ${env.PERSONAPLEX_WS_URL}`);
-
-  // Start pre-warming PersonaPlex sessions.
-  pool.start().catch((err) => {
-    logger.error('Failed to start session pool', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+  logger.info(`Voxvidia bridge running on port ${PORT}`);
+  logger.info('Stack: Deepgram Nova-3 + GPT-4.1 mini + Rime Mist v3');
 });
 
 // ── Process error handlers ────────────────────────────────────────────────────
@@ -507,12 +533,10 @@ process.on('unhandledRejection', (reason: unknown) => {
 const shutdown = (signal: string) => {
   logger.info(`Received ${signal}, shutting down gracefully`);
 
-  // Shut down session pool and opus decoder.
-  pool.shutdown();
-  opusDecoder?.stop();
-
-  // Close all active PersonaPlex connections.
+  // Close all active Deepgram + Rime connections.
   for (const session of sessions.all()) {
+    session.deepgramConn?.close();
+    session.rimeConn?.close();
     session.transcript.flush();
     sessions.end(session.callSid);
   }

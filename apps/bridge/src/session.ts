@@ -1,13 +1,17 @@
 /**
  * Per-call session manager.
  *
- * Tracks all active Twilio <-> PersonaPlex bridge sessions
+ * Tracks all active Twilio <-> AI pipeline bridge sessions
  * and the metadata associated with each call.
+ *
+ * Pipeline: Deepgram STT -> GPT-4.1 mini -> Rime TTS
  */
 
-import WebSocket from 'ws';
 import { createLogger } from '@voxvidia/shared';
 import { TranscriptAccumulator } from './transcript.js';
+import type { DeepgramConnection } from './deepgram.js';
+import type { RimeConnection } from './rime.js';
+import type { ChatMessage } from './llm.js';
 
 const logger = createLogger('bridge:session');
 
@@ -29,22 +33,31 @@ export interface CallSession {
   /** When the session object was created */
   startedAt: Date;
 
-  /** PersonaPlex WebSocket connection */
-  personaplexWs: WebSocket | undefined;
+  /** Deepgram STT streaming connection */
+  deepgramConn: DeepgramConnection | undefined;
 
-  /** Whether the 0x00 handshake byte has been received from PersonaPlex */
-  handshakeReceived: boolean;
+  /** Rime TTS streaming connection */
+  rimeConn: RimeConnection | undefined;
 
-  /** Accumulates streaming text tokens from PersonaPlex */
+  /** Conversation messages for GPT-4.1 mini (system + user + assistant + tool) */
+  llmMessages: ChatMessage[];
+
+  /** Whether Rime is currently synthesizing/sending audio */
+  rimeIsSpeaking: boolean;
+
+  /** CRM contact ID once resolved (via lookup_contact tool) */
+  contactId: string | undefined;
+
+  /** Accumulates streaming text tokens into utterances */
   transcript: TranscriptAccumulator;
 
   /** Database row ID once persisted (null if DB is unavailable) */
   callDbId: string | undefined;
 
-  /** Voice prompt file sent to PersonaPlex */
+  /** Voice prompt / speaker ID for Rime TTS */
   voicePrompt: string;
 
-  /** Text prompt sent to PersonaPlex */
+  /** Text prompt / system instructions for GPT-4.1 mini */
   textPrompt: string;
 }
 
@@ -75,8 +88,11 @@ export class SessionManager {
       fromNumber,
       toNumber,
       startedAt: new Date(),
-      personaplexWs: undefined,
-      handshakeReceived: false,
+      deepgramConn: undefined,
+      rimeConn: undefined,
+      llmMessages: [],
+      rimeIsSpeaking: false,
+      contactId: undefined,
       transcript: new TranscriptAccumulator(),
       callDbId: undefined,
       voicePrompt,
@@ -106,16 +122,33 @@ export class SessionManager {
     return undefined;
   }
 
-  /** Tear down a session: close PersonaPlex WS, remove from map. */
+  /** Tear down a session: close Deepgram + Rime connections, remove from map. */
   end(callSid: string): void {
     const session = this.sessions.get(callSid);
     if (!session) return;
 
-    if (
-      session.personaplexWs &&
-      session.personaplexWs.readyState === WebSocket.OPEN
-    ) {
-      session.personaplexWs.close();
+    // Close Deepgram STT connection
+    if (session.deepgramConn) {
+      try {
+        session.deepgramConn.close();
+      } catch (err) {
+        logger.warn('Error closing Deepgram connection', {
+          callId: callSid,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Close Rime TTS connection
+    if (session.rimeConn) {
+      try {
+        session.rimeConn.close();
+      } catch (err) {
+        logger.warn('Error closing Rime connection', {
+          callId: callSid,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     const duration = Date.now() - session.startedAt.getTime();
@@ -123,6 +156,7 @@ export class SessionManager {
       callId: callSid,
       durationMs: duration,
       utterances: session.transcript.utteranceCount(),
+      llmTurns: session.llmMessages.filter(m => m.role === 'assistant').length,
     });
 
     this.sessions.delete(callSid);

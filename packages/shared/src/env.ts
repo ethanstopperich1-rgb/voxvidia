@@ -33,6 +33,12 @@ const envSchema = z.object({
   AGENT_NAME: z.string().optional(),
   COMPANY_NAME: z.string().optional(),
 
+  // AI pipeline (Deepgram + OpenAI + Rime)
+  DEEPGRAM_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  RIME_API_KEY: z.string().optional(),
+  RIME_VOICE: z.string().default('cove'),
+
   // Outbound webhooks
   OUTBOUND_CRM_WEBHOOK_URL: z.string().optional(),
   OUTBOUND_ANALYTICS_WEBHOOK_URL: z.string().optional(),
