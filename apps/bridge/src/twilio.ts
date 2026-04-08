@@ -88,7 +88,7 @@ export async function handleIncomingCall(
   const textPrompt = env.DEFAULT_PROMPT;
 
   // Return TwiML — no greeting, stream connects immediately.
-  // The session pool ensures PersonaPlex is pre-warmed and ready.
+  // Stream connects immediately — Deepgram, LLM, and Rime init on 'start' event.
   res.type('text/xml');
   res.send(
     `<?xml version="1.0" encoding="UTF-8"?>
@@ -203,7 +203,7 @@ export interface OutboundCallRequest {
 /**
  * POST /api/outbound
  *
- * Initiate an outbound call with a fully personalized PersonaPlex agent.
+ * Initiate an outbound call with a fully personalized voice agent.
  * All dynamic variables (name, context, instructions) are baked into the prompt.
  *
  * Example:

@@ -344,9 +344,19 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           onInterim: (text) => {
             // Barge-in detection: caller is speaking while AI is talking
             if (session.rimeIsSpeaking && text.length > 3) {
+              // 1. Clear Rime's synthesis buffer
               rimeConn.clear();
               session.rimeIsSpeaking = false;
-              logger.info('Barge-in detected', { callId: callSid, interim: text });
+
+              // 2. Clear Twilio's audio playback queue so silence is immediate
+              if (twilioWs.readyState === WebSocket.OPEN && session.streamSid) {
+                twilioWs.send(JSON.stringify({
+                  event: 'clear',
+                  streamSid: session.streamSid,
+                }));
+              }
+
+              logger.info('Barge-in detected — cleared Rime + Twilio', { callId: callSid, interim: text });
             }
           },
           onUtteranceEnd: () => {

@@ -1,4 +1,4 @@
-# PersonaPlex Voice Agent Prompt Engineering Guide
+# Voice Agent Prompt Engineering Guide
 
 ## Prompt Template
 
@@ -76,18 +76,35 @@ Use the enriched outbound endpoint (`POST /api/outbound/enriched`) to auto-injec
 - Today's calendar events
 - Current date/time
 
+## LLM Configuration
+
+GPT-4.1 mini is configured in `apps/bridge/src/llm.ts`:
+- `temperature: 0.3` — low temp for consistent, factual responses
+- `max_tokens: 150` — keeps voice responses short (1-2 sentences)
+- `tools`: 5 function definitions for CRM/calendar actions
+- Streaming enabled — tokens flow sentence-by-sentence to Rime TTS
+
 ## Voice Selection
 
-| Voice | Gender | Style |
-|-------|--------|-------|
-| NATF0-3 | Female | Natural, conversational |
-| NATM0-3 | Male | Natural, conversational |
-| VARF0-4 | Female | Varied, character |
-| VARM0-4 | Male | Varied, character |
+Rime Mist v3 voices are configured via the `RIME_VOICE` env var or per-call via `customParameters.voice`.
 
-## Latency Targets
+Browse available voices at [rime.ai/docs/voices](https://docs.rime.ai/docs/voices).
 
-- Static prompt: ~800 tokens
-- Dynamic context: ~400-500 tokens
-- Total per turn: <2,000 tokens
-- Keep responses to 1-2 sentences for voice
+## Prompt Size Targets
+
+- Static prompt (identity + rules): ~800 tokens
+- Dynamic context (CRM + calendar): ~400-500 tokens
+- Total per turn: <2,000 tokens (keeps GPT-4.1 mini TTFT fast)
+- Response length: 1-2 sentences for voice (enforced by max_tokens=150)
+
+## Filler Phrases
+
+During tool execution, the agent speaks a natural filler to avoid silence:
+
+| Tool | Filler |
+|------|--------|
+| `lookup_contact` | "One moment while I pull up your information." |
+| `check_availability` | "Let me check what we have available." |
+| `book_appointment` | "Great, I'm booking that right now." |
+| `transfer_to_human` | "Let me connect you with our team." |
+| `send_follow_up_sms` | "I'll send you a text with those details." |

@@ -3,9 +3,8 @@ import { z } from 'zod';
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.string().default('development'),
-  PERSONAPLEX_WS_URL: z.string().default('ws://localhost:8998/api/chat'),
-  DEFAULT_VOICE: z.string().default('NATF2.pt'),
-  DEFAULT_PROMPT: z.string().default('You enjoy having a good conversation. You are friendly and helpful.'),
+  DEFAULT_VOICE: z.string().default('cove'),
+  DEFAULT_PROMPT: z.string().default('default'),
 
   // Twilio
   TWILIO_ACCOUNT_SID: z.string().optional(),

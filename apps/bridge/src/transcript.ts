@@ -1,8 +1,8 @@
 /**
  * Streaming text-token accumulator.
  *
- * PersonaPlex sends text tokens one at a time (0x02 + utf8).
- * This class buffers them into complete utterances.
+ * Buffers streaming text into complete utterances.
+ * Used to accumulate Deepgram transcripts before sending to the LLM.
  */
 
 export interface Utterance {

@@ -1,4 +1,5 @@
--- PersonaPlex schema for Voxvidia voice agent system
+-- VoxVidia voice agent system schema
+-- NOTE: personaplex_session_id column retained for backward compatibility
 -- Tables prefixed with pp_ to namespace within shared Supabase project
 
 -- ── pp_calls ─────────────────────────────────────────────────────────────────

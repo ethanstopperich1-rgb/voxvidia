@@ -1,5 +1,5 @@
 // ── Orchestrator ─────────────────────────────────────────────────────────────
-// Central coordinator for PersonaPlex voice agent tool execution.
+// Central coordinator for voice agent tool execution.
 // Receives raw utterances, detects intent, manages confirmation for writes,
 // and returns voice-ready responses.
 

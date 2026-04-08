@@ -4,9 +4,11 @@
 - Node.js 20+
 - pnpm (`npm install -g pnpm`)
 - Twilio account with a phone number
-- RunPod account with A40/A6000 GPU pod
-- Supabase project (optional for MVP)
+- Deepgram API key ([console.deepgram.com](https://console.deepgram.com))
+- OpenAI API key ([platform.openai.com](https://platform.openai.com))
+- Rime API key ([rime.ai](https://rime.ai))
 - Render account (for bridge hosting)
+- Supabase project (optional — for call logging + analytics)
 
 ## Local Development
 
@@ -16,7 +18,7 @@ pnpm install
 
 # Copy environment variables
 cp .env.example .env
-# Edit .env with your values
+# Edit .env with your API keys
 
 # Build all packages
 pnpm build
@@ -25,32 +27,25 @@ pnpm build
 pnpm dev
 ```
 
-## RunPod Setup (PersonaPlex GPU)
-
-1. Create a GPU pod (A40 48GB recommended)
-2. Expose ports: `8998/http,22/tcp`
-3. SSH in and run:
-```bash
-apt-get update -qq && apt-get install -y -qq libopus-dev git
-cd /workspace && git clone https://github.com/NVIDIA/personaplex.git
-cd personaplex && pip install ./moshi/
-NO_TORCH_COMPILE=1 nohup python -m moshi.server --host 0.0.0.0 --device cuda &
-```
-4. Note the proxy URL: `wss://<pod-id>-8998.proxy.runpod.net/api/chat`
-
-## Render Deployment (Bridge)
+## Render Deployment
 
 1. Push this repo to GitHub
 2. In Render dashboard, create a new Web Service
 3. Connect the GitHub repo
-4. Set build command: `npm install -g pnpm && pnpm install && pnpm build`
-5. Set start command: `node apps/bridge/dist/server.js`
-6. Add environment variables:
-   - `PERSONAPLEX_WS_URL` = `wss://<pod-id>-8998.proxy.runpod.net/api/chat`
-   - `DEFAULT_VOICE` = `NATF2.pt`
-   - `DEFAULT_PROMPT` = your agent prompt
-   - `TWILIO_ACCOUNT_SID` = your Twilio SID
-   - `TWILIO_AUTH_TOKEN` = your Twilio auth token
+4. Runtime: Docker (uses the included Dockerfile)
+5. Plan: Starter (512MB is sufficient — no GPU, no Python)
+6. Add environment variables (see `.env.example`):
+   - `DEEPGRAM_API_KEY`
+   - `OPENAI_API_KEY`
+   - `RIME_API_KEY`
+   - `RIME_VOICE` = `cove`
+   - `TWILIO_ACCOUNT_SID`
+   - `TWILIO_AUTH_TOKEN`
+   - `TWILIO_FROM_NUMBER`
+   - `AGENT_NAME` = `Maria`
+   - `COMPANY_NAME` = `Orlando Motors`
+
+Or use `render.yaml` for Blueprint deployment (auto-configures everything).
 
 ## Twilio Configuration
 
@@ -58,22 +53,73 @@ NO_TORCH_COMPILE=1 nohup python -m moshi.server --host 0.0.0.0 --device cuda &
 2. Set "A call comes in" webhook to: `https://<render-url>/twilio/voice` (POST)
 3. Set "Call status changes" to: `https://<render-url>/twilio/status` (POST)
 
+## Outbound Calls
+
+### Basic outbound
+```bash
+curl -X POST https://<render-url>/api/outbound \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "+15551234567",
+    "prompt": "You are Maria at Orlando Motors. Call John about his service appointment.",
+    "voice": "cove"
+  }'
+```
+
+### Enriched outbound (auto-injects CRM + Calendar context)
+```bash
+curl -X POST https://<render-url>/api/outbound/enriched \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "+15551234567",
+    "templatePrompt": "Follow up on the service appointment we discussed yesterday."
+  }'
+```
+
 ## Supabase Setup (Optional)
 
 1. Create a new Supabase project
 2. Run the migration: `supabase/migrations/001_personaplex_schema.sql`
 3. Add `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` to environment variables
 
+## CRM + Calendar Integration
+
+Set `USE_STUB_ADAPTERS=false` and configure:
+
+**GoHighLevel CRM:**
+- `CRM_BASE_URL` — GHL API base URL
+- `CRM_API_KEY` — GHL API key
+
+**Google Calendar:**
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+- `GOOGLE_CALENDAR_ID` (default: `primary`)
+
+When stub adapters are enabled (default), tools return realistic fake data for testing.
+
+## Health Check
+
+```bash
+curl https://<render-url>/health
+# Returns: { "status": "ok", "activeCalls": 0, "stack": "deepgram-nova3 + gpt-4.1-mini + rime-mistv3" }
+```
+
 ## Environment Variables
 
-See `.env.example` for the full list. Required for MVP:
-- `PORT` — server port (default 3000)
-- `PERSONAPLEX_WS_URL` — PersonaPlex WebSocket URL
-- `DEFAULT_VOICE` — voice prompt filename
-- `DEFAULT_PROMPT` — system prompt text
+See `.env.example` for the full list.
 
-Optional:
-- Twilio credentials (for signature validation)
-- Supabase credentials (for call logging)
-- CRM/Calendar credentials (for tool orchestration)
-- Outbound webhook URLs (for post-call analytics)
+**Required:**
+- `DEEPGRAM_API_KEY` — Deepgram Nova-3 STT
+- `OPENAI_API_KEY` — GPT-4.1 mini LLM
+- `RIME_API_KEY` — Rime Mist v3 TTS
+
+**Recommended:**
+- `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` — signature validation + outbound calls
+- `AGENT_NAME` + `COMPANY_NAME` — agent persona
+- `RIME_VOICE` — Rime speaker ID (default: `cove`)
+
+**Optional:**
+- Supabase credentials (call logging)
+- CRM/Calendar credentials (tool orchestration)
+- Outbound webhook URLs (post-call analytics)
