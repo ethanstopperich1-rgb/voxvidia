@@ -89,37 +89,30 @@ export function createRimeConnection(
   });
 
   ws.on('message', (data: WebSocket.RawData) => {
-    // /ws endpoint sends raw binary audio frames (mulaw 8kHz)
-    let buf: Buffer;
-    if (Buffer.isBuffer(data)) {
-      buf = data;
-    } else if (data instanceof ArrayBuffer) {
-      buf = Buffer.from(data);
-    } else if (Array.isArray(data)) {
-      buf = Buffer.concat(data);
-    } else {
-      // Might be a string (JSON control message)
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === 'done' || msg.type === 'finished') {
-          speaking = false;
-          callbacks.onDone();
-          logger.debug('Rime synthesis done', { callId });
-        }
-        if (msg.type === 'error') {
-          logger.error('Rime error', { callId, error: msg });
-          callbacks.onError(new Error(msg.message || 'Rime TTS error'));
-        }
-      } catch (_e) {
-        // Not JSON, not binary — ignore
-      }
-      return;
-    }
+    // ws3 JSON protocol: ALL messages are JSON text, never raw binary.
+    // Audio: {"type": "chunk", "data": "<base64 mulaw audio>"}
+    // Done:  {"type": "done"} or {"type": "finished"}
+    // Error: {"type": "error", "message": "..."}
+    try {
+      const raw = typeof data === 'string' ? data : data.toString();
+      const msg = JSON.parse(raw);
 
-    // Raw binary audio — send directly to Twilio
-    if (buf.length > 0) {
-      speaking = true;
-      callbacks.onAudio(buf);
+      if (msg.type === 'chunk' && msg.data) {
+        const audioBuf = Buffer.from(msg.data, 'base64');
+        if (audioBuf.length > 0) {
+          speaking = true;
+          callbacks.onAudio(audioBuf);
+        }
+      } else if (msg.type === 'done' || msg.type === 'finished') {
+        speaking = false;
+        callbacks.onDone();
+        logger.debug('Rime synthesis done', { callId });
+      } else if (msg.type === 'error') {
+        logger.error('Rime error', { callId, error: msg });
+        callbacks.onError(new Error(msg.message || 'Rime TTS error'));
+      }
+    } catch (_e) {
+      logger.warn('Rime: failed to parse message', { callId });
     }
   });
 
