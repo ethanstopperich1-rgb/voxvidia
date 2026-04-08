@@ -110,7 +110,7 @@ export function createRimeConnection(
           logger.error('Rime error', { callId, error: msg });
           callbacks.onError(new Error(msg.message || 'Rime TTS error'));
         }
-      } catch {
+      } catch (_e) {
         // Not JSON, not binary — ignore
       }
       return;
@@ -121,7 +121,7 @@ export function createRimeConnection(
       speaking = true;
       callbacks.onAudio(buf);
     }
-    } catch {
+    } catch (_e) {
       // Not JSON — likely raw binary audio
       const buf = Buffer.from(data as any);
       if (buf.length > 0) {
