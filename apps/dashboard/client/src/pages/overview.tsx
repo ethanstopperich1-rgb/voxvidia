@@ -1,13 +1,7 @@
 import { useState, useEffect } from "react";
 import { Phone, CalendarCheck, UserCheck, Zap, DollarSign, CreditCard } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
-import {
-  overviewStats as mockOverviewStats,
-  callVolumeByHour as mockCallVolume,
-  conversionFunnel as mockFunnel,
-  activityFeed as mockActivity,
-  campaignSummary as mockCampaigns,
-} from "@/lib/mock-data";
+import { conversionFunnel as mockFunnel } from "@/lib/mock-data";
 import {
   BarChart,
   Bar,
@@ -20,17 +14,20 @@ import {
 } from "recharts";
 
 export default function Overview() {
-  const [overviewStats, setOverviewStats] = useState(mockOverviewStats);
-  const [callVolumeByHour, setCallVolume] = useState(mockCallVolume);
-  const [activityFeed, setActivity] = useState(mockActivity);
+  const [overviewStats, setOverviewStats] = useState<any>(null);
+  const [callVolumeByHour, setCallVolume] = useState<any[]>([]);
+  const [activityFeed, setActivity] = useState<any[]>([]);
   const [conversionFunnel] = useState(mockFunnel);
-  const [campaignSummary] = useState(mockCampaigns);
+  const [campaignSummary] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch("/api/overview-stats").then(r => r.ok ? r.json() : null).then(d => { if (d) setOverviewStats(d); }).catch(() => {});
-    fetch("/api/call-volume-hourly").then(r => r.ok ? r.json() : null).then(d => { if (d?.length) setCallVolume(d); }).catch(() => {});
-    fetch("/api/activity-feed").then(r => r.ok ? r.json() : null).then(d => { if (d?.length) setActivity(d); }).catch(() => {});
+    fetch("/api/overview-stats").then(r => r.ok ? r.json() : null).then(d => setOverviewStats(d || { totalCallsToday: 0, appointmentsBooked: 0, conversionRate: 0, avgResponseTime: 0, avgCallDuration: 0, aiCost: "0.00", revenueImpact: 0, afterHoursCalls: 0, showRate: 0 })).catch(() => {});
+    fetch("/api/call-volume-hourly").then(r => r.ok ? r.json() : []).then(d => setCallVolume(d)).catch(() => {});
+    fetch("/api/activity-feed").then(r => r.ok ? r.json() : []).then(d => setActivity(d)).catch(() => {});
+    fetch("/api/campaigns").then(r => r.ok ? r.json() : []).catch(() => {});
   }, []);
+
+  if (!overviewStats) return <div className="p-6 text-muted-foreground">Loading...</div>;
 
   return (
     <div className="p-6 space-y-6 overflow-auto h-full" data-testid="page-overview">

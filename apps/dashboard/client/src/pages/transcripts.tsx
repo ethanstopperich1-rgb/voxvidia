@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, Phone, Video, X } from "lucide-react";
-import { voiceCalls, type VoiceCall } from "@/lib/mock-data";
+import type { VoiceCall } from "@/lib/mock-data";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 
@@ -33,9 +33,16 @@ function formatTime(ts: string): string {
 export default function Transcripts() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTranscript, setSelectedTranscript] = useState<VoiceCall | null>(null);
+  const [voiceCalls, setVoiceCalls] = useState<VoiceCall[]>([]);
 
-  // Only show calls with actual transcripts
-  const allTranscripts = voiceCalls.filter((c) => c.transcript.length > 0);
+  useEffect(() => {
+    fetch("/api/voice-calls")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setVoiceCalls(data))
+      .catch(() => setVoiceCalls([]));
+  }, []);
+
+  const allTranscripts = voiceCalls.filter((c) => c.transcript && c.transcript.length > 0);
 
   const filteredTranscripts = allTranscripts.filter((c) => {
     if (!searchQuery) return true;

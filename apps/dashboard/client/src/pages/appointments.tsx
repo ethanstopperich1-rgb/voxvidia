@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CalendarDays, List } from "lucide-react";
-import { appointments, type Appointment } from "@/lib/mock-data";
+import type { Appointment } from "@/lib/mock-data";
 import { Badge } from "@/components/ui/badge";
 
 const statusBadge: Record<string, { label: string; className: string }> = {
@@ -52,6 +52,14 @@ function getWeekDays(): Date[] {
 
 export default function Appointments() {
   const [view, setView] = useState<"list" | "calendar">("list");
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+
+  useEffect(() => {
+    fetch("/api/appointments")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setAppointments(data))
+      .catch(() => setAppointments([]));
+  }, []);
 
   const sortedAppointments = [...appointments].sort(
     (a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime()

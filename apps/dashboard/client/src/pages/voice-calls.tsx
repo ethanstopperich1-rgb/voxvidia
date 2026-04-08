@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Phone, PhoneIncoming, PhoneOutgoing, Clock, TrendingUp, DollarSign, X, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import type { VoiceCall } from "@/lib/mock-data";
-import { voiceCalls as mockCalls } from "@/lib/mock-data";
 import { Badge } from "@/components/ui/badge";
 
 const outcomeBadge: Record<string, { label: string; className: string }> = {
@@ -33,13 +32,15 @@ function formatTime(ts: string): string {
 export default function VoiceCalls() {
   const [selectedCall, setSelectedCall] = useState<VoiceCall | null>(null);
   const [filter, setFilter] = useState<string>("all");
-  const [voiceCalls, setVoiceCalls] = useState<VoiceCall[]>(mockCalls);
+  const [voiceCalls, setVoiceCalls] = useState<VoiceCall[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/voice-calls")
       .then((r) => r.ok ? r.json() : [])
-      .then((data) => { if (data.length > 0) setVoiceCalls(data); })
-      .catch(() => {}); // Fall back to mock data on error
+      .then((data) => setVoiceCalls(data))
+      .catch(() => setVoiceCalls([]))
+      .finally(() => setLoading(false));
   }, []);
 
   const filteredCalls = voiceCalls

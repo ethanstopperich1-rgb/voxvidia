@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Mail, ArrowRight, X } from "lucide-react";
-import { campaigns, type Campaign } from "@/lib/mock-data";
+import type { Campaign } from "@/lib/mock-data";
 import { Badge } from "@/components/ui/badge";
 
 const statusBadge: Record<string, { label: string; className: string }> = {
@@ -27,6 +27,14 @@ function MiniChart({ data }: { data: number[] }) {
 
 export default function Campaigns() {
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+
+  useEffect(() => {
+    fetch("/api/campaigns")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setCampaigns(data))
+      .catch(() => setCampaigns([]));
+  }, []);
 
   return (
     <div className="p-6 space-y-6 overflow-auto h-full" data-testid="page-campaigns">
