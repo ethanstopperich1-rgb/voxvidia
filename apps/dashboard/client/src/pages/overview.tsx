@@ -1,11 +1,12 @@
+import { useState, useEffect } from "react";
 import { Phone, CalendarCheck, UserCheck, Zap, DollarSign, CreditCard } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
 import {
-  overviewStats,
-  callVolumeByHour,
-  conversionFunnel,
-  activityFeed,
-  campaignSummary,
+  overviewStats as mockOverviewStats,
+  callVolumeByHour as mockCallVolume,
+  conversionFunnel as mockFunnel,
+  activityFeed as mockActivity,
+  campaignSummary as mockCampaigns,
 } from "@/lib/mock-data";
 import {
   BarChart,
@@ -19,6 +20,18 @@ import {
 } from "recharts";
 
 export default function Overview() {
+  const [overviewStats, setOverviewStats] = useState(mockOverviewStats);
+  const [callVolumeByHour, setCallVolume] = useState(mockCallVolume);
+  const [activityFeed, setActivity] = useState(mockActivity);
+  const [conversionFunnel] = useState(mockFunnel);
+  const [campaignSummary] = useState(mockCampaigns);
+
+  useEffect(() => {
+    fetch("/api/overview-stats").then(r => r.ok ? r.json() : null).then(d => { if (d) setOverviewStats(d); }).catch(() => {});
+    fetch("/api/call-volume-hourly").then(r => r.ok ? r.json() : null).then(d => { if (d?.length) setCallVolume(d); }).catch(() => {});
+    fetch("/api/activity-feed").then(r => r.ok ? r.json() : null).then(d => { if (d?.length) setActivity(d); }).catch(() => {});
+  }, []);
+
   return (
     <div className="p-6 space-y-6 overflow-auto h-full" data-testid="page-overview">
       <div>
