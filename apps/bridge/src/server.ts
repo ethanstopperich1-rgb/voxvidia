@@ -40,8 +40,17 @@ import { logOrchestratorResult } from './personaplex.js';
 
 const logger = createLogger('bridge:server');
 const sessions = new SessionManager();
-const pool = new SessionPool({ poolSize: 2 });
-const opusDecoder = createOpusDecoder();
+// Pool size from env (default 0 on starter plan to avoid OOM, increase to 1-2 on standard plan)
+const POOL_SIZE = parseInt(process.env.POOL_SIZE || '0', 10);
+const pool = new SessionPool({ poolSize: POOL_SIZE });
+// Lazy-init Opus decoder on first audio to save memory on startup
+let opusDecoder: ReturnType<typeof createOpusDecoder> | null = null;
+function getOpusDecoder() {
+  if (!opusDecoder) {
+    opusDecoder = createOpusDecoder();
+  }
+  return opusDecoder;
+}
 
 // ── Orchestrator setup ──────────────────────────────────────────────────────
 const calendarAdapter = new StubCalendarAdapter();
@@ -57,25 +66,28 @@ const orchestrator = new Orchestrator({
 });
 
 // ── Opus decoder → Twilio audio return path ─────────────────────────────────
-// When the decoder produces PCM at 24kHz, downsample to 8kHz, encode mulaw,
-// and send to ALL active Twilio streams.
-opusDecoder.onDecodedPcm((pcm24k: Int16Array) => {
-  const pcm8k = resample(pcm24k, 24000, 8000);
-  const mulawBuf = encodeMulaw(pcm8k);
-  const payload = mulawBuf.toString('base64');
+// Registered lazily on first call to avoid OOM on startup.
+let opusCallbackRegistered = false;
+function ensureOpusCallback() {
+  if (opusCallbackRegistered) return;
+  opusCallbackRegistered = true;
+  getOpusDecoder().onDecodedPcm((pcm24k: Int16Array) => {
+    const pcm8k = resample(pcm24k, 24000, 8000);
+    const mulawBuf = encodeMulaw(pcm8k);
+    const payload = mulawBuf.toString('base64');
 
-  // Send to all active Twilio WebSocket connections
-  for (const [sid, ws] of twilioWsMap.entries()) {
-    const session = sessions.getByStreamSid?.(sid) ?? [...sessions.all()].find(s => s.streamSid === sid);
-    if (session && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        event: 'media',
-        streamSid: sid,
-        media: { payload },
-      }));
+    for (const [sid, ws] of twilioWsMap.entries()) {
+      const session = [...sessions.all()].find(s => s.streamSid === sid);
+      if (session && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          event: 'media',
+          streamSid: sid,
+          media: { payload },
+        }));
+      }
     }
-  }
-});
+  });
+}
 
 // Track Twilio WebSocket per session for audio return.
 const twilioWsMap = new Map<string, WebSocket>();
@@ -208,6 +220,7 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         );
         session.streamSid = streamSid;
         twilioWsMap.set(streamSid, twilioWs);
+        ensureOpusCallback();
 
         // Try to acquire a pre-warmed session from the pool first.
         const warmSession = pool.acquire();
@@ -232,8 +245,8 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             if (kind === 0x01) {
               // Audio from PersonaPlex — decode Opus, downsample, encode mulaw, send to Twilio
               const opusData = buf.subarray(1);
-              if (opusDecoder.isRunning && session.streamSid) {
-                opusDecoder.decode(opusData);
+              if (getOpusDecoder().isRunning && session.streamSid) {
+                getOpusDecoder().decode(opusData);
               }
             }
             if (kind === 0x02) {
@@ -280,8 +293,8 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
 
             onAudio: (opusData: Buffer) => {
               // Decode Opus, downsample 24k->8k, encode mulaw, send to Twilio
-              if (opusDecoder.isRunning && session.streamSid) {
-                opusDecoder.decode(opusData);
+              if (getOpusDecoder().isRunning && session.streamSid) {
+                getOpusDecoder().decode(opusData);
               }
             },
 
@@ -496,7 +509,7 @@ const shutdown = (signal: string) => {
 
   // Shut down session pool and opus decoder.
   pool.shutdown();
-  opusDecoder.stop();
+  opusDecoder?.stop();
 
   // Close all active PersonaPlex connections.
   for (const session of sessions.all()) {
