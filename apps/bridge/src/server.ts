@@ -71,55 +71,283 @@ const callTranscripts = new Map<string, Array<{ speaker: string; text: string; t
 const callToolCalls = new Map<string, Array<{ name: string; args: any; result: any; success: boolean }>>();
 const callStartTimes = new Map<string, number>();
 
-// ── Tool Runner setup (VIP Buyback stubs) ──────────────────────────────────
+// ── Tool Runner setup (VIP Buyback — real Supabase implementations) ─────────
 const toolRegistry = new ToolRegistry();
 
-toolRegistry.register('get_buyback_lead_context', async (_args) => {
+// VIP desk number — could be env var later
+const VIP_DESK_NUMBER = '+14072890294';
+
+toolRegistry.register('get_buyback_lead_context', async (args) => {
+  if (!supabase) return { found: false, reason: 'database_unavailable' };
+
+  const phone = (args.caller_phone as string) || '';
+  const mailerCode = args.mailer_code as string | null;
+
+  // Normalize phone: strip non-digits, ensure E.164-ish for matching
+  const digits = phone.replace(/\D/g, '');
+  if (!digits && !mailerCode) return { found: false, reason: 'no_identifier' };
+
+  // Try mailer_code first (most specific), then phone
+  let query = supabase.from('leads').select('*');
+  if (mailerCode) {
+    query = query.eq('mailer_code', mailerCode);
+  } else {
+    // Match on last 10 digits to handle +1 prefix variations
+    const last10 = digits.slice(-10);
+    query = query.like('phone', `%${last10}`);
+  }
+
+  const { data, error } = await query.eq('dealer_id', DEALER_ID).limit(1).single();
+
+  if (error || !data) {
+    logger.info('No lead found for caller', { phone, mailerCode });
+    return { found: false, reason: 'no_match' };
+  }
+
   return {
-    lead_id: 'lead_abc123',
-    customer_name: 'Marcus Johnson',
-    vehicle: '2021 Toyota Camry SE',
-    mailer_campaign: 'spring_buyback_2026',
-    status: 'new',
+    found: true,
+    lead_id: data.id,
+    customer_name: data.customer_name,
+    vehicle: data.vehicle,
+    mailer_campaign: data.mailer_campaign,
+    status: data.status,
+    still_owns_vehicle: data.still_owns_vehicle,
+    callback_phone: data.callback_phone,
   };
 });
 
 toolRegistry.register('update_lead_status', async (args) => {
-  return { updated: true, lead_id: args.lead_id };
-});
+  if (!supabase) return { updated: false, error: 'database_unavailable' };
 
-toolRegistry.register('get_appraisal_slots', async (_args) => {
-  return {
-    slots: [
-      { slot_id: 'slot_fri_10am', date: 'Friday, April 11', time: '10:00 AM', available: true },
-      { slot_id: 'slot_fri_2pm', date: 'Friday, April 11', time: '2:00 PM', available: true },
-    ],
+  const leadId = args.lead_id as string;
+  const updateFields: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+  if (args.still_owns_vehicle != null) updateFields.still_owns_vehicle = args.still_owns_vehicle;
+  if (args.interest_level) updateFields.interest_level = args.interest_level;
+  if (args.vehicle_disposition) updateFields.vehicle_disposition = args.vehicle_disposition;
+  if (args.notes) updateFields.notes = args.notes;
+
+  // Map interest_level to lead status
+  const interestToStatus: Record<string, string> = {
+    interested: 'interested',
+    not_interested: 'not_interested',
+    wrong_person: 'wrong_person',
   };
+  if (args.interest_level && interestToStatus[args.interest_level as string]) {
+    updateFields.status = interestToStatus[args.interest_level as string];
+  }
+  if (args.still_owns_vehicle === false) {
+    updateFields.status = 'no_longer_has_vehicle';
+  }
+
+  const { error } = await supabase.from('leads').update(updateFields).eq('id', leadId);
+
+  if (error) {
+    logger.error('update_lead_status failed', { leadId, error: error.message });
+    return { updated: false, error: error.message };
+  }
+
+  return { updated: true, lead_id: leadId };
 });
 
-toolRegistry.register('book_appraisal_appointment', async (_args) => {
+toolRegistry.register('get_appraisal_slots', async (args) => {
+  // Generate 2 real slots based on current date/time
+  // Rules: no Sundays, no same-day slots after 4 PM, hard-cap at 2 slots
+  const maxSlots = Math.min(Number(args.max_slots_to_return) || 2, 2);
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const slots: Array<{ slot_id: string; date: string; time: string; available: boolean }> = [];
+
+  // Start from tomorrow if it's after 4 PM today
+  let startDay = now.getHours() >= 16 ? 1 : 0;
+  if (startDay === 0) startDay = 1; // always start from at least tomorrow
+
+  for (let dayOffset = startDay; dayOffset < 14 && slots.length < maxSlots; dayOffset++) {
+    const candidate = new Date(now);
+    candidate.setDate(candidate.getDate() + dayOffset);
+
+    // Skip Sundays
+    if (candidate.getDay() === 0) continue;
+
+    const dayName = dayNames[candidate.getDay()];
+    const monthName = monthNames[candidate.getMonth()];
+    const dateStr = `${dayName}, ${monthName} ${candidate.getDate()}`;
+
+    // Morning slot: 10 AM
+    if (slots.length < maxSlots) {
+      const slotDate = `${candidate.getFullYear()}-${String(candidate.getMonth() + 1).padStart(2, '0')}-${String(candidate.getDate()).padStart(2, '0')}`;
+      slots.push({
+        slot_id: `slot_${slotDate}_10am`,
+        date: dateStr,
+        time: '10:00 AM',
+        available: true,
+      });
+    }
+
+    // Afternoon slot: 2 PM
+    if (slots.length < maxSlots) {
+      const slotDate = `${candidate.getFullYear()}-${String(candidate.getMonth() + 1).padStart(2, '0')}-${String(candidate.getDate()).padStart(2, '0')}`;
+      slots.push({
+        slot_id: `slot_${slotDate}_2pm`,
+        date: dateStr,
+        time: '2:00 PM',
+        available: true,
+      });
+    }
+  }
+
+  return { slots };
+});
+
+toolRegistry.register('book_appraisal_appointment', async (args) => {
+  if (args.customer_confirmed_slot !== true) {
+    return { error: 'Slot not confirmed by customer' };
+  }
+
+  if (!supabase) return { error: 'database_unavailable' };
+
+  const leadId = args.lead_id as string;
+  const slotId = args.selected_slot_id as string;
+
+  // Parse slot_id format: slot_YYYY-MM-DD_10am or slot_YYYY-MM-DD_2pm
+  const slotMatch = slotId.match(/^slot_(\d{4}-\d{2}-\d{2})_(\d{1,2})(am|pm)$/);
+  if (!slotMatch) return { error: 'Invalid slot ID format' };
+
+  const [, dateStr, hourStr, meridiem] = slotMatch;
+  let hour = parseInt(hourStr, 10);
+  if (meridiem === 'pm' && hour < 12) hour += 12;
+  if (meridiem === 'am' && hour === 12) hour = 0;
+  const timeStr = `${String(hour).padStart(2, '0')}:00:00`;
+
+  const confirmationCode = 'VX-' + Date.now().toString().slice(-6);
+
+  const { error } = await supabase.from('appointments').insert({
+    dealer_id: DEALER_ID,
+    lead_id: leadId,
+    confirmation_code: confirmationCode,
+    appointment_date: dateStr,
+    appointment_time: timeStr,
+    duration_minutes: 15,
+    appointment_type: (args.appointment_type as string) || 'vip_buyback_appraisal',
+    callback_phone: (args.callback_phone as string) || null,
+    notes: (args.notes as string) || null,
+  });
+
+  if (error) {
+    logger.error('book_appraisal_appointment failed', { leadId, error: error.message });
+    return { error: error.message };
+  }
+
+  // Update lead status
+  await supabase.from('leads').update({
+    status: 'appointment_booked',
+    updated_at: new Date().toISOString(),
+  }).eq('id', leadId);
+
+  // Format the time naturally for the response
+  const displayHour = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+  const displayMeridiem = hour >= 12 ? 'PM' : 'AM';
+  const appointmentDate = new Date(dateStr + 'T12:00:00');
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+  const displayDate = `${dayNames[appointmentDate.getDay()]}, ${monthNames[appointmentDate.getMonth()]} ${appointmentDate.getDate()}`;
+
   return {
     booked: true,
-    confirmation: 'VX-' + Date.now().toString().slice(-6),
-    date: 'Friday, April 11',
-    time: '10:00 AM',
+    confirmation: confirmationCode,
+    date: displayDate,
+    time: `${displayHour}:00 ${displayMeridiem}`,
     duration: '15 minutes',
   };
 });
 
 toolRegistry.register('save_callback_number', async (args) => {
-  return {
-    saved: true,
-    normalized: '+1' + (args.callback_phone_raw as string || '').replace(/\D/g, ''),
-  };
+  if (args.customer_confirmed_digits !== true) {
+    return { error: 'Digits not confirmed' };
+  }
+
+  const raw = (args.callback_phone_raw as string) || '';
+  const digits = raw.replace(/\D/g, '');
+
+  // Normalize to E.164
+  let normalized: string;
+  if (digits.length === 10) {
+    normalized = `+1${digits}`;
+  } else if (digits.length === 11 && digits.startsWith('1')) {
+    normalized = `+${digits}`;
+  } else {
+    normalized = `+${digits}`;
+  }
+
+  if (!supabase) return { saved: true, normalized };
+
+  const leadId = args.lead_id as string;
+  const { error } = await supabase.from('leads').update({
+    callback_phone: normalized,
+    updated_at: new Date().toISOString(),
+  }).eq('id', leadId);
+
+  if (error) {
+    logger.error('save_callback_number failed', { leadId, error: error.message });
+    return { saved: false, error: error.message };
+  }
+
+  return { saved: true, normalized };
 });
 
 toolRegistry.register('transfer_to_vip_desk', async (args) => {
-  return { transferred: true, department: 'VIP Desk', reason: args.transfer_reason };
+  // Log the transfer in Supabase
+  if (supabase) {
+    await supabase.from('transfer_log').insert({
+      dealer_id: DEALER_ID,
+      lead_id: (args.lead_id as string) || null,
+      transfer_reason: args.transfer_reason as string,
+      vip_desk_number: VIP_DESK_NUMBER,
+    }).then(({ error }) => {
+      if (error) logger.error('transfer_log insert failed', { error: error.message });
+    });
+  }
+
+  // TODO: Implement real Twilio <Dial> to VIP queue
+  return {
+    transferred: true,
+    department: 'VIP Desk',
+    phone_number: VIP_DESK_NUMBER,
+    reason: args.transfer_reason,
+  };
 });
 
 toolRegistry.register('log_call_outcome', async (args) => {
-  return { logged: true, outcome: args.final_outcome };
+  if (!supabase) return { logged: false, error: 'database_unavailable' };
+
+  const leadId = args.lead_id as string | null;
+  const outcome = args.final_outcome as string;
+  const followUp = args.follow_up_needed as boolean;
+  const summary = args.summary_note as string | null;
+
+  // Update lead status based on outcome
+  if (leadId) {
+    const outcomeToStatus: Record<string, string> = {
+      appointment_booked: 'appointment_booked',
+      not_interested: 'not_interested',
+      no_longer_has_vehicle: 'no_longer_has_vehicle',
+      wrong_person: 'wrong_person',
+      requested_callback: 'callback_requested',
+    };
+    const newStatus = outcomeToStatus[outcome];
+    if (newStatus) {
+      await supabase.from('leads').update({
+        status: newStatus,
+        updated_at: new Date().toISOString(),
+      }).eq('id', leadId);
+    }
+  }
+
+  return { logged: true, outcome };
 });
 
 const toolRunner = new ToolRunner(toolRegistry);
@@ -173,8 +401,29 @@ app.post('/twilio/recording-status', (req, res) => {
   });
 });
 
+// ── Outbound API auth middleware ─────────────────────────────────────────────
+function requireApiSecret(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  const secret = env.VOXVIDIA_API_SECRET;
+  if (!secret) {
+    // If no secret is configured, allow the request (dev mode)
+    next();
+    return;
+  }
+  const authHeader = req.headers.authorization;
+  if (!authHeader || authHeader !== `Bearer ${secret}`) {
+    logger.warn('Unauthorized API request', { path: req.path, ip: req.ip });
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  next();
+}
+
 // Outbound call API.
-app.post('/api/outbound', (req, res) => {
+app.post('/api/outbound', requireApiSecret, (req, res) => {
   handleOutboundCall(req, res).catch((err) => {
     logger.error('handleOutboundCall error', {
       error: err instanceof Error ? err.message : String(err),
@@ -184,7 +433,7 @@ app.post('/api/outbound', (req, res) => {
 });
 
 // Enriched outbound call API (CRM + Calendar context injected into prompt).
-app.post('/api/outbound/enriched', (req, res) => {
+app.post('/api/outbound/enriched', requireApiSecret, (req, res) => {
   handleEnrichedOutboundCall(req, res).catch((err) => {
     logger.error('handleEnrichedOutboundCall error', {
       error: err instanceof Error ? err.message : String(err),
@@ -271,14 +520,16 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           }),
         );
 
-        // 2. Build system prompt
-        const systemPrompt = buildSystemPrompt({
+        // 2. Build initial system prompt (will be rebuilt after lead lookup)
+        const buildPromptOpts = {
           agentName: env.AGENT_NAME,
           companyName: env.COMPANY_NAME,
           customPrompt: textPrompt !== 'default' ? textPrompt : undefined,
           callerPhone: fromNumber,
           currentDateTime: new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }),
-        });
+        } as Parameters<typeof buildSystemPrompt>[0];
+
+        const systemPrompt = buildSystemPrompt(buildPromptOpts);
 
         // 3. Initialize conversation messages
         session.llmMessages = [{ role: 'system', content: systemPrompt }];
@@ -469,20 +720,18 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             await streamChatCompletion(env.OPENAI_API_KEY || '', session.llmMessages, {
               onToken: (token) => {
                 responseBuffer += token;
-                // Send complete sentences to Rime for synthesis
-                const sentences = responseBuffer.match(/[^.!?]+[.!?]+/g);
-                if (sentences) {
-                  for (const s of sentences) {
-                    rimeConn.speak(s.trim());
-                  }
-                  // Keep any incomplete sentence in buffer
-                  const lastDot = responseBuffer.lastIndexOf('.');
-                  const lastBang = responseBuffer.lastIndexOf('!');
-                  const lastQ = responseBuffer.lastIndexOf('?');
-                  const lastPunct = Math.max(lastDot, lastBang, lastQ);
-                  if (lastPunct > -1) {
-                    responseBuffer = responseBuffer.substring(lastPunct + 1);
-                  }
+                // Send complete sentences to Rime for synthesis.
+                // Match all sentences ending with punctuation; the remainder
+                // is everything after the last matched sentence.
+                const sentenceRe = /[^.!?]+[.!?]+/g;
+                let lastMatchEnd = 0;
+                let match: RegExpExecArray | null;
+                while ((match = sentenceRe.exec(responseBuffer)) !== null) {
+                  rimeConn.speak(match[0].trim());
+                  lastMatchEnd = sentenceRe.lastIndex;
+                }
+                if (lastMatchEnd > 0) {
+                  responseBuffer = responseBuffer.substring(lastMatchEnd);
                 }
                 session.rimeIsSpeaking = true;
               },
@@ -544,26 +793,61 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         }, callSid!);
         session.deepgramConn = deepgramConn;
 
-        // 8. Generate AI greeting
-        const greetingPrompt = session.llmMessages.slice(); // Copy messages
-        streamChatCompletion(env.OPENAI_API_KEY || '', greetingPrompt, {
-          onToken: () => {},
-          onToolCall: handleToolCall,
-          onDone: (greeting) => {
-            speakText(greeting);
-            session.llmMessages.push({ role: 'assistant', content: greeting });
-            logger.info('AI greeting', { callId: callSid, text: greeting });
-          },
-          onError: () => {
+        // 8. Lookup lead context first, then generate AI greeting
+        (async () => {
+          try {
+            // Attempt lead lookup before generating the greeting
+            const leadResult = await toolRunner.runTool('get_buyback_lead_context', {
+              lead_session_id: null,
+              caller_phone: fromNumber,
+              mailer_code: null,
+            });
+
+            if (leadResult.success && leadResult.data) {
+              const lead = leadResult.data as Record<string, unknown>;
+              if (lead.found !== false && lead.customer_name) {
+                // Rebuild system prompt with lead data
+                buildPromptOpts.callerName = String(lead.customer_name);
+                buildPromptOpts.vehicleInfo = lead.vehicle ? String(lead.vehicle) : undefined;
+                buildPromptOpts.contactId = lead.lead_id ? String(lead.lead_id) : undefined;
+                const enrichedPrompt = buildSystemPrompt(buildPromptOpts);
+                session.llmMessages = [{ role: 'system', content: enrichedPrompt }];
+                logger.info('Lead context loaded for greeting', {
+                  callId: callSid,
+                  name: lead.customer_name,
+                  vehicle: lead.vehicle,
+                });
+              }
+            }
+          } catch (err) {
+            logger.warn('Lead lookup failed before greeting, using generic opener', {
+              callId: callSid,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+
+          // Generate greeting (with or without lead context)
+          try {
+            await streamChatCompletion(env.OPENAI_API_KEY || '', session.llmMessages.slice(), {
+              onToken: () => {},
+              onToolCall: handleToolCall,
+              onDone: (greeting) => {
+                speakText(greeting);
+                session.llmMessages.push({ role: 'assistant', content: greeting });
+                logger.info('AI greeting', { callId: callSid, text: greeting });
+              },
+              onError: () => {
+                speakText("Hi, thanks for calling. How can I help you today?");
+              },
+            }, callSid!);
+          } catch (err) {
+            logger.error('Greeting generation error', {
+              callId: callSid,
+              error: err instanceof Error ? err.message : String(err),
+            });
             speakText("Hi, thanks for calling. How can I help you today?");
-          },
-        }, callSid!).catch((err) => {
-          logger.error('Greeting generation error', {
-            callId: callSid,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          speakText("Hi, thanks for calling. How can I help you today?");
-        });
+          }
+        })();
 
         break;
       }

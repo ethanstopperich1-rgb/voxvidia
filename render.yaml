@@ -37,3 +37,5 @@ services:
         sync: false
       - key: USE_STUB_ADAPTERS
         value: "true"
+      - key: VOXVIDIA_API_SECRET
+        sync: false

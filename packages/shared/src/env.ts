@@ -38,6 +38,9 @@ const envSchema = z.object({
   RIME_API_KEY: z.string().optional(),
   RIME_VOICE: z.string().default('cove'),
 
+  // API auth for outbound endpoints
+  VOXVIDIA_API_SECRET: z.string().optional(),
+
   // Outbound webhooks
   OUTBOUND_CRM_WEBHOOK_URL: z.string().optional(),
   OUTBOUND_ANALYTICS_WEBHOOK_URL: z.string().optional(),
