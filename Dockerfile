@@ -13,7 +13,7 @@ COPY apps/workers/package.json apps/workers/tsconfig.json apps/workers/
 COPY packages/shared/package.json packages/shared/tsconfig.json packages/shared/
 COPY packages/storage/package.json packages/storage/tsconfig.json packages/storage/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # Copy source and build
 COPY . .
