@@ -21,7 +21,7 @@ import express from 'express';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { createLogger, env } from '@voxvidia/shared';
 import { SessionManager } from './session.js';
-import { decodeMulaw, resample, pcmToBuffer } from './audio.js';
+import { decodeMulaw, encodeMulaw, resample, pcmToBuffer, bufferToPcm } from './audio.js';
 import { createDeepgramConnection } from './deepgram.js';
 import { createRimeConnection, chunkTextForTTS } from './rime.js';
 import {
@@ -204,13 +204,29 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
 
         // 4. Connect to Rime TTS
         const rimeConn = createRimeConnection(env.RIME_API_KEY || '', env.RIME_VOICE, {
-          onAudio: (mulawBuffer) => {
-            // Send mulaw audio DIRECTLY to Twilio — no transcoding!
+          onAudio: (audioBuffer) => {
+            // Rime ws3 may return PCM (not mulaw) — convert if needed.
+            // PCM from Rime is typically 22050Hz int16 LE.
+            // Twilio needs 8000Hz mulaw.
+            let mulawPayload: string;
+            try {
+              // Try to detect if this is PCM (will be larger than mulaw for same duration)
+              // PCM 22050Hz: ~44100 bytes/sec. Mulaw 8000Hz: ~8000 bytes/sec
+              // If buffer is much larger than expected for mulaw, it's likely PCM
+              const pcm = bufferToPcm(audioBuffer);
+              const pcm8k = resample(pcm, 22050, 8000);
+              const mulaw = encodeMulaw(pcm8k);
+              mulawPayload = mulaw.toString('base64');
+            } catch {
+              // If conversion fails, try sending as-is (might already be mulaw)
+              mulawPayload = audioBuffer.toString('base64');
+            }
+
             if (twilioWs.readyState === WebSocket.OPEN && session.streamSid) {
               twilioWs.send(JSON.stringify({
                 event: 'media',
                 streamSid: session.streamSid,
-                media: { payload: mulawBuffer.toString('base64') },
+                media: { payload: mulawPayload },
               }));
             }
           },

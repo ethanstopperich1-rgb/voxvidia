@@ -88,27 +88,21 @@ export function createRimeConnection(
   });
 
   ws.on('message', (data: WebSocket.RawData) => {
-    // Rime sends binary audio frames directly
-    if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      if (buf.length > 0) {
-        speaking = true;
-        callbacks.onAudio(buf);
-      }
-      return;
-    }
+    // ws3 sends JSON messages, not raw binary
+    const raw = data.toString();
 
-    // Rime may also send JSON control messages
     try {
-      const msg = JSON.parse(data.toString());
+      const msg = JSON.parse(raw);
 
       if (msg.type === 'chunk') {
-        // Audio chunk — binary data should have been caught above
-        // but some implementations send base64 in JSON
-        if (msg.audio) {
-          const audioBuf = Buffer.from(msg.audio, 'base64');
-          speaking = true;
-          callbacks.onAudio(audioBuf);
+        // ws3 sends: {"type": "chunk", "data": "<base64 audio>", "contextId": ...}
+        const audioB64 = msg.data || msg.audio;
+        if (audioB64) {
+          const audioBuf = Buffer.from(audioB64, 'base64');
+          if (audioBuf.length > 0) {
+            speaking = true;
+            callbacks.onAudio(audioBuf);
+          }
         }
       }
 
@@ -118,9 +112,13 @@ export function createRimeConnection(
         logger.debug('Rime synthesis done', { callId });
       }
 
+      if (msg.type === 'timestamps') {
+        // Word-level timestamps — useful for analytics, ignore for now
+      }
+
       if (msg.type === 'error') {
         logger.error('Rime error', { callId, error: msg });
-        callbacks.onError(new Error(msg.message || 'Rime TTS error'));
+        callbacks.onError(new Error(msg.message || msg.error || 'Rime TTS error'));
       }
     } catch {
       // Not JSON — likely raw binary audio
