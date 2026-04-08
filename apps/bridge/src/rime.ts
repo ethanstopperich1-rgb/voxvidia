@@ -1,14 +1,18 @@
 /**
- * Rime AI Mist v3 Streaming TTS Client
+ * Rime AI Mist v3 Streaming TTS Client (ws3 JSON protocol)
  *
- * Connects to Rime's WebSocket API for real-time text-to-speech.
- * Sends text chunks, receives mulaw 8kHz audio — directly compatible
- * with Twilio Media Streams (zero transcoding needed).
+ * Connects to Rime's ws3 WebSocket endpoint for real-time text-to-speech.
+ * Uses the JSON protocol with operations: text, flush, clear, eos.
  *
- * Key features:
- * - <CLEAR> command for barge-in interruption
- * - Sentence-level chunking for optimal latency
- * - mulaw 8kHz output eliminates all audio processing on return path
+ * Protocol:
+ *   Send: {"text": "..."} — queue text for synthesis
+ *   Send: {"operation": "flush"} — force synthesis of buffered text
+ *   Send: {"operation": "clear"} — cancel current synthesis (barge-in)
+ *   Send: {"operation": "eos"} — end of stream
+ *   Recv: {"type": "chunk", "data": "<base64 audio>"} — audio data
+ *   Recv: {"type": "done"} — synthesis complete
+ *
+ * Audio: mulaw 8kHz output — directly compatible with Twilio (zero transcoding)
  */
 
 import WebSocket from 'ws';
@@ -16,7 +20,7 @@ import { createLogger } from '@voxvidia/shared';
 
 const logger = createLogger('bridge:rime');
 
-const RIME_WS_BASE = 'wss://users-east-ws.rime.ai/ws';
+const RIME_WS_BASE = 'wss://users-ws.rime.ai/ws3';
 
 export interface RimeCallbacks {
   /** Called with mulaw audio bytes — send directly to Twilio. */
@@ -32,6 +36,8 @@ export interface RimeCallbacks {
 export interface RimeConnection {
   /** Send text to be spoken. Rime synthesizes and streams audio back. */
   speak: (text: string) => void;
+  /** Force synthesis of any buffered text. Call at end of a response. */
+  flush: () => void;
   /** Clear the current synthesis — use for barge-in interruption. */
   clear: () => void;
   /** Close the connection. */
@@ -149,24 +155,34 @@ export function createRimeConnection(
 
       logger.debug('Rime speak', { callId, text: text.substring(0, 80) });
 
-      // Send text as a JSON message
-      ws.send(JSON.stringify({
-        text: text,
-      }));
+      // ws3 JSON protocol: send text for synthesis
+      ws.send(JSON.stringify({ text }));
+    },
+
+    /** Force synthesis of any buffered text. Call at end of response. */
+    flush(): void {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ operation: 'flush' }));
     },
 
     clear(): void {
       if (ws.readyState !== WebSocket.OPEN) return;
 
       speaking = false;
-      // Send clear command to stop current synthesis
-      ws.send(JSON.stringify({ type: 'clear' }));
+      // ws3 clear operation: cancel current synthesis (barge-in)
+      ws.send(JSON.stringify({ operation: 'clear' }));
       logger.debug('Rime clear (barge-in)', { callId });
     },
 
     close(): void {
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close(1000, 'call ended');
+      if (ws.readyState === WebSocket.OPEN) {
+        // Send end-of-stream before closing
+        ws.send(JSON.stringify({ operation: 'eos' }));
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close(1000, 'call ended');
+          }
+        }, 500);
       }
     },
 
