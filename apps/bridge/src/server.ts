@@ -204,29 +204,14 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
 
         // 4. Connect to Rime TTS
         const rimeConn = createRimeConnection(env.RIME_API_KEY || '', env.RIME_VOICE, {
-          onAudio: (audioBuffer) => {
-            // Rime ws3 may return PCM (not mulaw) — convert if needed.
-            // PCM from Rime is typically 22050Hz int16 LE.
-            // Twilio needs 8000Hz mulaw.
-            let mulawPayload: string;
-            try {
-              // Try to detect if this is PCM (will be larger than mulaw for same duration)
-              // PCM 22050Hz: ~44100 bytes/sec. Mulaw 8000Hz: ~8000 bytes/sec
-              // If buffer is much larger than expected for mulaw, it's likely PCM
-              const pcm = bufferToPcm(audioBuffer);
-              const pcm8k = resample(pcm, 22050, 8000);
-              const mulaw = encodeMulaw(pcm8k);
-              mulawPayload = mulaw.toString('base64');
-            } catch {
-              // If conversion fails, try sending as-is (might already be mulaw)
-              mulawPayload = audioBuffer.toString('base64');
-            }
-
+          onAudio: (mulawBuffer) => {
+            // /ws endpoint with audioFormat=mulaw&samplingRate=8000 outputs
+            // raw mulaw 8kHz — send DIRECTLY to Twilio, zero conversion.
             if (twilioWs.readyState === WebSocket.OPEN && session.streamSid) {
               twilioWs.send(JSON.stringify({
                 event: 'media',
                 streamSid: session.streamSid,
-                media: { payload: mulawPayload },
+                media: { payload: mulawBuffer.toString('base64') },
               }));
             }
           },

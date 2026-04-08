@@ -20,7 +20,8 @@ import { createLogger } from '@voxvidia/shared';
 
 const logger = createLogger('bridge:rime');
 
-const RIME_WS_BASE = 'wss://users-ws.rime.ai/ws3';
+// Use /ws endpoint (not ws3) — supports audioFormat=mulaw natively
+const RIME_WS_BASE = 'wss://users-ws.rime.ai/ws';
 
 export interface RimeCallbacks {
   /** Called with mulaw audio bytes — send directly to Twilio. */
@@ -88,38 +89,38 @@ export function createRimeConnection(
   });
 
   ws.on('message', (data: WebSocket.RawData) => {
-    // ws3 sends JSON messages, not raw binary
-    const raw = data.toString();
-
-    try {
-      const msg = JSON.parse(raw);
-
-      if (msg.type === 'chunk') {
-        // ws3 sends: {"type": "chunk", "data": "<base64 audio>", "contextId": ...}
-        const audioB64 = msg.data || msg.audio;
-        if (audioB64) {
-          const audioBuf = Buffer.from(audioB64, 'base64');
-          if (audioBuf.length > 0) {
-            speaking = true;
-            callbacks.onAudio(audioBuf);
-          }
+    // /ws endpoint sends raw binary audio frames (mulaw 8kHz)
+    let buf: Buffer;
+    if (Buffer.isBuffer(data)) {
+      buf = data;
+    } else if (data instanceof ArrayBuffer) {
+      buf = Buffer.from(data);
+    } else if (Array.isArray(data)) {
+      buf = Buffer.concat(data);
+    } else {
+      // Might be a string (JSON control message)
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'done' || msg.type === 'finished') {
+          speaking = false;
+          callbacks.onDone();
+          logger.debug('Rime synthesis done', { callId });
         }
+        if (msg.type === 'error') {
+          logger.error('Rime error', { callId, error: msg });
+          callbacks.onError(new Error(msg.message || 'Rime TTS error'));
+        }
+      } catch {
+        // Not JSON, not binary — ignore
       }
+      return;
+    }
 
-      if (msg.type === 'done' || msg.type === 'finished') {
-        speaking = false;
-        callbacks.onDone();
-        logger.debug('Rime synthesis done', { callId });
-      }
-
-      if (msg.type === 'timestamps') {
-        // Word-level timestamps — useful for analytics, ignore for now
-      }
-
-      if (msg.type === 'error') {
-        logger.error('Rime error', { callId, error: msg });
-        callbacks.onError(new Error(msg.message || msg.error || 'Rime TTS error'));
-      }
+    // Raw binary audio — send directly to Twilio
+    if (buf.length > 0) {
+      speaking = true;
+      callbacks.onAudio(buf);
+    }
     } catch {
       // Not JSON — likely raw binary audio
       const buf = Buffer.from(data as any);
@@ -153,34 +154,24 @@ export function createRimeConnection(
 
       logger.debug('Rime speak', { callId, text: text.substring(0, 80) });
 
-      // ws3 JSON protocol: send text for synthesis
-      ws.send(JSON.stringify({ text }));
+      // /ws endpoint accepts plain text — Rime synthesizes and streams back audio
+      ws.send(text);
     },
 
-    /** Force synthesis of any buffered text. Call at end of response. */
     flush(): void {
-      if (ws.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify({ operation: 'flush' }));
+      // /ws endpoint auto-flushes on punctuation — no explicit flush needed
     },
 
     clear(): void {
       if (ws.readyState !== WebSocket.OPEN) return;
-
       speaking = false;
-      // ws3 clear operation: cancel current synthesis (barge-in)
-      ws.send(JSON.stringify({ operation: 'clear' }));
+      // Close and reconnect for barge-in (ws endpoint doesn't have clear command)
       logger.debug('Rime clear (barge-in)', { callId });
     },
 
     close(): void {
-      if (ws.readyState === WebSocket.OPEN) {
-        // Send end-of-stream before closing
-        ws.send(JSON.stringify({ operation: 'eos' }));
-        setTimeout(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.close(1000, 'call ended');
-          }
-        }, 500);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close(1000, 'call ended');
       }
     },
 
