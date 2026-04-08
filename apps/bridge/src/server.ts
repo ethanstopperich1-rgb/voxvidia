@@ -53,6 +53,29 @@ const toolRegistry = new ToolRegistry();
 registerCalendarTools(toolRegistry, calendarAdapter);
 registerCrmTools(toolRegistry, crmAdapter);
 
+// Register LLM tool names (GPT-4.1 mini uses these names via function calling)
+// Map them to the same adapters the orchestrator uses
+toolRegistry.register('check_availability', async (args) => {
+  return calendarAdapter.getTodayEvents(args.timezone as string | undefined);
+});
+toolRegistry.register('book_appointment', async (args) => {
+  return calendarAdapter.createEvent({
+    summary: `${args.service_type || 'Service'} appointment`,
+    date: args.date as string || 'tomorrow',
+    time: args.time as string || '10:00 AM',
+    durationMinutes: 60,
+  });
+});
+toolRegistry.register('lookup_contact', async (args) => {
+  return crmAdapter.findContactByPhone(args.phone_number as string || '');
+});
+toolRegistry.register('transfer_to_human', async (args) => {
+  return { transferred: true, department: args.department, reason: args.reason };
+});
+toolRegistry.register('send_follow_up_sms', async (args) => {
+  return { sent: true, contactId: args.contact_id, message: args.message };
+});
+
 const toolRunner = new ToolRunner(toolRegistry);
 
 const orchestrator = new Orchestrator({
@@ -236,8 +259,16 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           session.rimeIsSpeaking = true;
         };
 
-        // 6. Function to handle LLM tool calls
+        // 6. Function to handle LLM tool calls (with retry limit)
+        let toolCallCount = 0;
+        const MAX_TOOL_CALLS = 3;
         const handleToolCall = async (toolCall: ToolCall) => {
+          toolCallCount++;
+          if (toolCallCount > MAX_TOOL_CALLS) {
+            logger.warn('Tool call limit reached', { callId: callSid, count: toolCallCount });
+            speakText("I apologize, I'm having some trouble with my system. Would you like me to connect you with a team member instead?");
+            return;
+          }
           const toolName = toolCall.function.name;
           const filler = getFillerPhrase(toolName);
 
