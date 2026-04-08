@@ -8,7 +8,7 @@ build({
   target: "node20",
   outfile: "dist/server.js",
   format: "cjs",
-  external: ["twilio"],
+  external: ["twilio", "@supabase/supabase-js"],
   sourcemap: true,
 }).then(() => console.log("Bridge bundled successfully"))
   .catch((e) => { console.error(e); process.exit(1); });
