@@ -36,9 +36,9 @@ export function AppSidebar() {
 
   return (
     <Sidebar data-testid="sidebar">
-      <SidebarHeader className="p-5 pb-6">
-        <Link href="/" className="flex items-center gap-2 no-underline">
-          <img src={logoSrc} alt="Voxaris AI" className="h-7 w-auto" />
+      <SidebarHeader className="p-5 pb-8">
+        <Link href="/" className="block no-underline">
+          <img src={logoSrc} alt="Voxaris AI" className="w-full max-w-[180px] h-auto" />
         </Link>
       </SidebarHeader>
       <SidebarContent>
