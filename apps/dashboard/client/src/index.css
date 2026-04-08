@@ -2,67 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
-/* VoxVidia — Dark Luxury SaaS Aesthetic
-   Backgrounds: #0a0a0a / #111111 / #161616
-   Gold accent: #d4a843
-   Emerald positive: #10b981
-   Rose negative: #f43f5e
+/* Voxaris AI Dashboard — Light theme with silver/black accents
+   Background: white #ffffff / light gray #f8f9fa / #f1f3f5
+   Silver accent: #6B7280 (from logo chrome)
+   Black accent: #111111
+   Positive: #059669 (emerald-600)
+   Negative: #dc2626 (red-600)
 */
 
 :root {
-  --button-outline: rgba(255, 255, 255, 0.1);
-  --badge-outline: rgba(255, 255, 255, 0.05);
+  --button-outline: rgba(0, 0, 0, 0.08);
+  --badge-outline: rgba(0, 0, 0, 0.06);
   --opaque-button-border-intensity: 9;
-  --elevate-1: rgba(255, 255, 255, 0.04);
-  --elevate-2: rgba(255, 255, 255, 0.09);
+  --elevate-1: rgba(0, 0, 0, 0.03);
+  --elevate-2: rgba(0, 0, 0, 0.06);
 
-  /* Dark-only palette — no light mode needed */
-  --background: 0 0% 4%;          /* #0a0a0a */
-  --foreground: 40 6% 90%;        /* warm off-white */
-  --border: 0 0% 14%;             /* #242424 */
-  --card: 0 0% 7%;                /* #111111 */
-  --card-foreground: 40 6% 90%;
-  --card-border: 0 0% 12%;        /* #1e1e1e */
-  --sidebar: 0 0% 5%;             /* slightly above bg */
-  --sidebar-foreground: 40 6% 90%;
-  --sidebar-border: 0 0% 10%;
-  --sidebar-primary: 42 56% 55%;  /* gold #d4a843 */
-  --sidebar-primary-foreground: 0 0% 4%;
-  --sidebar-accent: 0 0% 10%;
-  --sidebar-accent-foreground: 40 6% 90%;
-  --sidebar-ring: 42 56% 55%;
-  --popover: 0 0% 8%;
-  --popover-foreground: 40 6% 90%;
-  --popover-border: 0 0% 14%;
-  --primary: 42 56% 55%;          /* gold #d4a843 */
-  --primary-foreground: 0 0% 4%;
-  --secondary: 0 0% 9%;           /* #161616 */
-  --secondary-foreground: 40 6% 90%;
-  --muted: 0 0% 9%;
-  --muted-foreground: 0 0% 55%;
-  --accent: 0 0% 9%;
-  --accent-foreground: 40 6% 90%;
-  --destructive: 350 89% 60%;     /* rose #f43f5e */
-  --destructive-foreground: 0 0% 98%;
-  --input: 0 0% 18%;
-  --ring: 42 56% 55%;
-  --chart-1: 42 56% 55%;          /* gold */
-  --chart-2: 160 84% 39%;         /* emerald #10b981 */
-  --chart-3: 350 89% 60%;         /* rose */
-  --chart-4: 200 70% 50%;         /* info blue */
-  --chart-5: 42 56% 70%;          /* light gold */
-  --font-sans: 'Inter', 'DM Sans', sans-serif;
+  --background: 0 0% 100%;          /* #ffffff */
+  --foreground: 0 0% 7%;            /* #111111 */
+  --border: 220 13% 91%;            /* #e5e7eb */
+  --card: 0 0% 100%;                /* white cards */
+  --card-foreground: 0 0% 7%;
+  --card-border: 220 13% 91%;
+  --sidebar: 220 14% 96%;           /* #f3f4f6 light gray */
+  --sidebar-foreground: 0 0% 7%;
+  --sidebar-border: 220 13% 91%;
+  --sidebar-primary: 220 9% 46%;    /* silver #6B7280 */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 220 14% 93%;    /* light hover */
+  --sidebar-accent-foreground: 0 0% 7%;
+  --sidebar-ring: 220 9% 46%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 7%;
+  --popover-border: 220 13% 91%;
+  --primary: 0 0% 7%;               /* black #111 as primary */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 96%;         /* light gray */
+  --secondary-foreground: 0 0% 7%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 9% 46%;   /* silver for muted text */
+  --accent: 220 14% 96%;
+  --accent-foreground: 0 0% 7%;
+  --destructive: 0 84% 60%;         /* red-500 */
+  --destructive-foreground: 0 0% 100%;
+  --input: 220 13% 91%;
+  --ring: 220 9% 46%;               /* silver ring */
+  --chart-1: 220 9% 42%;            /* silver */
+  --chart-2: 160 84% 39%;           /* emerald */
+  --chart-3: 0 84% 60%;             /* red */
+  --chart-4: 217 91% 60%;           /* blue */
+  --chart-5: 220 9% 62%;            /* lighter silver */
+  --font-sans: 'Inter', system-ui, sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: 'JetBrains Mono', Menlo, monospace;
   --radius: 0.5rem;
-  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0);
-  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0);
-  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
-  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
-  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
-  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
-  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
-  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.04);
+  --shadow-xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0px 1px 3px 0px hsl(0 0% 0% / 0.06), 0px 1px 2px -1px hsl(0 0% 0% / 0.06);
+  --shadow: 0px 2px 4px 0px hsl(0 0% 0% / 0.06), 0px 1px 2px -1px hsl(0 0% 0% / 0.06);
+  --shadow-md: 0px 4px 6px -1px hsl(0 0% 0% / 0.07), 0px 2px 4px -2px hsl(0 0% 0% / 0.05);
+  --shadow-lg: 0px 10px 15px -3px hsl(0 0% 0% / 0.07), 0px 4px 6px -4px hsl(0 0% 0% / 0.05);
+  --shadow-xl: 0px 20px 25px -5px hsl(0 0% 0% / 0.07), 0px 8px 10px -6px hsl(0 0% 0% / 0.05);
+  --shadow-2xl: 0px 25px 50px -12px hsl(0 0% 0% / 0.15);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
@@ -75,62 +75,19 @@
   --destructive-border: hsl(var(--destructive));
 
   /* Custom tokens */
-  --gold: #d4a843;
-  --gold-dim: #b8922e;
-  --emerald: #10b981;
-  --rose: #f43f5e;
-  --surface-elevated: #161616;
+  --silver: #6B7280;
+  --silver-light: #9CA3AF;
+  --silver-dark: #4B5563;
+  --black: #111111;
+  --emerald: #059669;
+  --rose: #dc2626;
+  --surface-elevated: #f8f9fa;
 }
 
-/* Force dark class since this is a dark-only dashboard */
+/* Keep .dark block but mirror :root (we're light-only now) */
 .dark {
-  --button-outline: rgba(255, 255, 255, 0.1);
-  --badge-outline: rgba(255, 255, 255, 0.05);
-  --opaque-button-border-intensity: 9;
-  --elevate-1: rgba(255, 255, 255, 0.04);
-  --elevate-2: rgba(255, 255, 255, 0.09);
-  --background: 0 0% 4%;
-  --foreground: 40 6% 90%;
-  --border: 0 0% 14%;
-  --card: 0 0% 7%;
-  --card-foreground: 40 6% 90%;
-  --card-border: 0 0% 12%;
-  --sidebar: 0 0% 5%;
-  --sidebar-foreground: 40 6% 90%;
-  --sidebar-border: 0 0% 10%;
-  --sidebar-primary: 42 56% 55%;
-  --sidebar-primary-foreground: 0 0% 4%;
-  --sidebar-accent: 0 0% 10%;
-  --sidebar-accent-foreground: 40 6% 90%;
-  --sidebar-ring: 42 56% 55%;
-  --popover: 0 0% 8%;
-  --popover-foreground: 40 6% 90%;
-  --popover-border: 0 0% 14%;
-  --primary: 42 56% 55%;
-  --primary-foreground: 0 0% 4%;
-  --secondary: 0 0% 9%;
-  --secondary-foreground: 40 6% 90%;
-  --muted: 0 0% 9%;
-  --muted-foreground: 0 0% 55%;
-  --accent: 0 0% 9%;
-  --accent-foreground: 40 6% 90%;
-  --destructive: 350 89% 60%;
-  --destructive-foreground: 0 0% 98%;
-  --input: 0 0% 18%;
-  --ring: 42 56% 55%;
-  --chart-1: 42 56% 55%;
-  --chart-2: 160 84% 39%;
-  --chart-3: 350 89% 60%;
-  --chart-4: 200 70% 50%;
-  --chart-5: 42 56% 70%;
-
-  --sidebar-primary-border: hsl(var(--sidebar-primary));
-  --sidebar-accent-border: hsl(var(--sidebar-accent));
-  --primary-border: hsl(var(--primary));
-  --secondary-border: hsl(var(--secondary));
-  --muted-border: hsl(var(--muted));
-  --accent-border: hsl(var(--accent));
-  --destructive-border: hsl(var(--destructive));
+  --background: 0 0% 100%;
+  --foreground: 0 0% 7%;
 }
 
 @layer base {
@@ -139,7 +96,7 @@
   }
 
   html {
-    color-scheme: dark;
+    color-scheme: light;
   }
 
   body {
@@ -217,7 +174,7 @@
   }
 }
 
-/* Custom scrollbar for the dark theme */
+/* Scrollbar — subtle for light theme */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -226,9 +183,9 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.12);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.2);
+  background: rgba(0,0,0,0.2);
 }

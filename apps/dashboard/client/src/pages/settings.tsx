@@ -39,17 +39,17 @@ Always maintain a helpful, patient tone. Never pressure customers. Confirm all a
       {/* Agent Configuration */}
       <section>
         <div className="flex items-center gap-2 mb-4">
-          <Bot className="h-4 w-4 text-[#d4a843]" />
+          <Bot className="h-4 w-4 text-gray-700" />
           <h2 className="text-sm font-semibold text-foreground">Agent Configuration</h2>
         </div>
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-5 space-y-4">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-muted-foreground mb-1.5 block">Agent Name</label>
               <Input
                 value={agentName}
                 onChange={(e) => setAgentName(e.target.value)}
-                className="bg-[#0a0a0a] border-[#1e1e1e] text-sm"
+                className="bg-gray-50 border-gray-200 text-sm"
                 data-testid="input-agent-name"
               />
             </div>
@@ -58,7 +58,7 @@ Always maintain a helpful, patient tone. Never pressure customers. Confirm all a
               <Input
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
-                className="bg-[#0a0a0a] border-[#1e1e1e] text-sm"
+                className="bg-gray-50 border-gray-200 text-sm"
                 data-testid="input-company-name"
               />
             </div>
@@ -71,8 +71,8 @@ Always maintain a helpful, patient tone. Never pressure customers. Confirm all a
                   key={voice}
                   className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
                     i === 0
-                      ? "bg-[#d4a843]/10 text-[#d4a843] border-[#d4a843]/30"
-                      : "bg-[#161616] text-muted-foreground border-[#1e1e1e] hover:border-[#2a2a2a]"
+                      ? "bg-gray-700/10 text-gray-700 border-gray-300"
+                      : "bg-gray-50 text-muted-foreground border-gray-200 hover:border-gray-300"
                   }`}
                 >
                   {voice}
@@ -85,7 +85,7 @@ Always maintain a helpful, patient tone. Never pressure customers. Confirm all a
             <Textarea
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
-              className="bg-[#0a0a0a] border-[#1e1e1e] text-xs font-mono leading-relaxed min-h-[180px] resize-y"
+              className="bg-gray-50 border-gray-200 text-xs font-mono leading-relaxed min-h-[180px] resize-y"
               data-testid="textarea-system-prompt"
             />
           </div>
@@ -95,21 +95,21 @@ Always maintain a helpful, patient tone. Never pressure customers. Confirm all a
       {/* Integrations */}
       <section>
         <div className="flex items-center gap-2 mb-4">
-          <Plug className="h-4 w-4 text-[#d4a843]" />
+          <Plug className="h-4 w-4 text-gray-700" />
           <h2 className="text-sm font-semibold text-foreground">Integrations</h2>
         </div>
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] divide-y divide-[#1a1a1a]">
+        <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
           {integrations.map((integration) => (
             <div key={integration.name} className="p-4 flex items-center justify-between" data-testid={`integration-${integration.name.toLowerCase()}`}>
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-medium text-foreground">{integration.name}</h3>
                   {integration.status === "connected" ? (
-                    <Badge variant="outline" className="text-[10px] bg-emerald-400/10 text-emerald-400 border-emerald-400/20">
+                    <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-600 border-emerald-400/20">
                       <Check className="h-2.5 w-2.5 mr-1" /> Connected
                     </Badge>
                   ) : (
-                    <Badge variant="outline" className="text-[10px] bg-[#d4a843]/10 text-[#d4a843] border-[#d4a843]/20">
+                    <Badge variant="outline" className="text-[10px] bg-gray-700/10 text-gray-700 border-gray-300">
                       <AlertCircle className="h-2.5 w-2.5 mr-1" /> Check Config
                     </Badge>
                   )}
@@ -125,10 +125,10 @@ Always maintain a helpful, patient tone. Never pressure customers. Confirm all a
       {/* Notifications */}
       <section>
         <div className="flex items-center gap-2 mb-4">
-          <Bell className="h-4 w-4 text-[#d4a843]" />
+          <Bell className="h-4 w-4 text-gray-700" />
           <h2 className="text-sm font-semibold text-foreground">Notifications</h2>
         </div>
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-5 space-y-4">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 space-y-4">
           {[
             { label: "Slack alerts for call transfers", description: "Notify when AI transfers to human", defaultOn: true },
             { label: "Email alerts for system failures", description: "API errors, timeouts, service outages", defaultOn: true },
@@ -147,7 +147,7 @@ Always maintain a helpful, patient tone. Never pressure customers. Confirm all a
             <label className="text-xs text-muted-foreground mb-1.5 block">Slack Webhook URL</label>
             <Input
               placeholder="https://hooks.slack.com/services/..."
-              className="bg-[#0a0a0a] border-[#1e1e1e] text-xs font-mono"
+              className="bg-gray-50 border-gray-200 text-xs font-mono"
               data-testid="input-slack-webhook"
             />
           </div>
@@ -157,42 +157,42 @@ Always maintain a helpful, patient tone. Never pressure customers. Confirm all a
       {/* Dealer Profile */}
       <section>
         <div className="flex items-center gap-2 mb-4">
-          <Building2 className="h-4 w-4 text-[#d4a843]" />
+          <Building2 className="h-4 w-4 text-gray-700" />
           <h2 className="text-sm font-semibold text-foreground">Dealer Profile</h2>
         </div>
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-5 space-y-4">
+        <div className="rounded-lg border border-gray-200 bg-white p-5 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-muted-foreground mb-1.5 block">Dealership Name</label>
-              <Input value="Orlando Motors" className="bg-[#0a0a0a] border-[#1e1e1e] text-sm" readOnly data-testid="input-dealership-name" />
+              <Input value="Orlando Motors" className="bg-gray-50 border-gray-200 text-sm" readOnly data-testid="input-dealership-name" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1.5 block">Phone</label>
-              <Input value="(407) 555-1000" className="bg-[#0a0a0a] border-[#1e1e1e] text-sm" readOnly data-testid="input-dealership-phone" />
+              <Input value="(407) 555-1000" className="bg-gray-50 border-gray-200 text-sm" readOnly data-testid="input-dealership-phone" />
             </div>
           </div>
           <div>
             <label className="text-xs text-muted-foreground mb-1.5 block">Address</label>
-            <Input value="7820 International Drive, Orlando, FL 32819" className="bg-[#0a0a0a] border-[#1e1e1e] text-sm" readOnly data-testid="input-dealership-address" />
+            <Input value="7820 International Drive, Orlando, FL 32819" className="bg-gray-50 border-gray-200 text-sm" readOnly data-testid="input-dealership-address" />
           </div>
           <div>
             <label className="text-xs text-muted-foreground mb-1.5 block">Hours of Operation</label>
             <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-              <div className="flex justify-between bg-[#0a0a0a] rounded px-3 py-2">
+              <div className="flex justify-between bg-gray-50 rounded px-3 py-2">
                 <span>Mon-Fri</span>
                 <span className="text-foreground">7:00 AM — 6:00 PM</span>
               </div>
-              <div className="flex justify-between bg-[#0a0a0a] rounded px-3 py-2">
+              <div className="flex justify-between bg-gray-50 rounded px-3 py-2">
                 <span>Saturday</span>
                 <span className="text-foreground">8:00 AM — 5:00 PM</span>
               </div>
-              <div className="flex justify-between bg-[#0a0a0a] rounded px-3 py-2">
+              <div className="flex justify-between bg-gray-50 rounded px-3 py-2">
                 <span>Sunday</span>
                 <span className="text-foreground">Closed</span>
               </div>
-              <div className="flex justify-between bg-[#0a0a0a] rounded px-3 py-2">
+              <div className="flex justify-between bg-gray-50 rounded px-3 py-2">
                 <span>AI Agent</span>
-                <span className="text-[#d4a843]">24/7/365</span>
+                <span className="text-gray-700">24/7/365</span>
               </div>
             </div>
           </div>

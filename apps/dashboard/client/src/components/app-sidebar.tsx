@@ -20,6 +20,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import logoSrc from "@assets/logo.jpg";
 
 const navItems = [
   { title: "Overview", url: "/", icon: LayoutDashboard },
@@ -37,10 +38,7 @@ export function AppSidebar() {
     <Sidebar data-testid="sidebar">
       <SidebarHeader className="p-5 pb-6">
         <Link href="/" className="flex items-center gap-2 no-underline">
-          <VoxarisLogo />
-          <span className="text-base font-semibold tracking-wide text-foreground">
-            VOXARIS
-          </span>
+          <img src={logoSrc} alt="Voxaris AI" className="h-7 w-auto" />
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -58,16 +56,16 @@ export function AppSidebar() {
                       asChild
                       className={`relative h-10 rounded-md transition-all duration-150 ${
                         isActive
-                          ? "bg-[#1a1a1a] text-[#d4a843]"
-                          : "text-[#888] hover:text-foreground hover:bg-[#161616]"
+                          ? "bg-gray-100 text-gray-900 font-medium"
+                          : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
                       }`}
                     >
                       <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
                         {isActive && (
-                          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-[#d4a843]" />
+                          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-gray-900" />
                         )}
                         <item.icon className="h-4 w-4 shrink-0" />
-                        <span className="text-sm font-medium">{item.title}</span>
+                        <span className="text-sm">{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -78,40 +76,17 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="p-4">
-        <div className="flex items-center gap-3 rounded-md border border-[#1e1e1e] bg-[#111] p-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[#1a1a1a]">
-            <Building2 className="h-4 w-4 text-[#d4a843]" />
+        <div className="flex items-center gap-3 rounded-md border border-gray-200 bg-white p-3">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gray-100">
+            <Building2 className="h-4 w-4 text-gray-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-foreground truncate">Orlando Motors</p>
-            <p className="text-[11px] text-muted-foreground truncate">Orlando, FL</p>
+            <p className="text-xs font-medium text-gray-900 truncate">Orlando Motors</p>
+            <p className="text-[11px] text-gray-500 truncate">Orlando, FL</p>
           </div>
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" />
         </div>
       </SidebarFooter>
     </Sidebar>
-  );
-}
-
-function VoxarisLogo() {
-  return (
-    <svg
-      width="28"
-      height="28"
-      viewBox="0 0 28 28"
-      fill="none"
-      aria-label="Voxaris logo"
-      className="shrink-0"
-    >
-      <rect width="28" height="28" rx="6" fill="#161616" />
-      <path
-        d="M7 8L14 20L21 8"
-        stroke="#d4a843"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="14" cy="20" r="2" fill="#d4a843" />
-    </svg>
   );
 }

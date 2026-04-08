@@ -4,17 +4,17 @@ import { voiceCalls, type VoiceCall } from "@/lib/mock-data";
 import { Badge } from "@/components/ui/badge";
 
 const outcomeBadge: Record<string, { label: string; className: string }> = {
-  appointment_set: { label: "Appointment Set", className: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
-  follow_up: { label: "Follow Up", className: "bg-[#d4a843]/10 text-[#d4a843] border-[#d4a843]/20" },
-  declined: { label: "Declined", className: "bg-rose-400/10 text-rose-400 border-rose-400/20" },
-  transferred: { label: "Transferred", className: "bg-blue-400/10 text-blue-400 border-blue-400/20" },
-  no_answer: { label: "No Answer", className: "bg-[#555]/10 text-[#888] border-[#555]/20" },
+  appointment_set: { label: "Appointment Set", className: "bg-emerald-50 text-emerald-600 border-emerald-400/20" },
+  follow_up: { label: "Follow Up", className: "bg-gray-700/10 text-gray-700 border-gray-300" },
+  declined: { label: "Declined", className: "bg-red-50 text-red-600 border-rose-400/20" },
+  transferred: { label: "Transferred", className: "bg-blue-50 text-blue-600 border-blue-400/20" },
+  no_answer: { label: "No Answer", className: "bg-gray-400/10 text-gray-500 border-gray-300" },
 };
 
 const sentimentColor: Record<string, string> = {
-  positive: "text-emerald-400",
+  positive: "text-emerald-600",
   neutral: "text-muted-foreground",
-  negative: "text-rose-400",
+  negative: "text-red-600",
 };
 
 function formatDuration(seconds: number): string {
@@ -70,9 +70,9 @@ export default function VoiceCalls() {
           { label: "Conversion Rate", value: `${conversionRate}%`, icon: TrendingUp, delta: "+12% vs last week" },
           { label: "Cost / Conversion", value: `$${costPerConversion.toFixed(2)}`, icon: DollarSign, delta: "vs $8.50 human BDC" },
         ].map((stat) => (
-          <div key={stat.label} className="rounded-lg border border-[#1e1e1e] bg-[#111] p-3">
+          <div key={stat.label} className="rounded-lg border border-gray-200 bg-white p-3">
             <div className="flex items-center gap-2 mb-1.5">
-              <stat.icon className="h-3.5 w-3.5 text-[#d4a843]" />
+              <stat.icon className="h-3.5 w-3.5 text-gray-700" />
               <span className="text-[11px] text-muted-foreground">{stat.label}</span>
             </div>
             <p className="text-lg font-semibold text-foreground">{stat.value}</p>
@@ -89,8 +89,8 @@ export default function VoiceCalls() {
             onClick={() => setFilter(f)}
             className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
               filter === f
-                ? "bg-[#d4a843]/15 text-[#d4a843] border border-[#d4a843]/30"
-                : "bg-[#161616] text-muted-foreground border border-[#1e1e1e] hover:border-[#2a2a2a] hover:text-foreground"
+                ? "bg-gray-700/15 text-gray-700 border border-gray-300"
+                : "bg-gray-50 text-muted-foreground border border-gray-200 hover:border-gray-300 hover:text-foreground"
             }`}
             data-testid={`filter-${f}`}
           >
@@ -100,11 +100,11 @@ export default function VoiceCalls() {
       </div>
 
       {/* Call Table */}
-      <div className="rounded-lg border border-[#1e1e1e] bg-[#111] overflow-hidden">
+      <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-[#1a1a1a] bg-[#0d0d0d]">
+              <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="text-left text-[11px] font-medium text-muted-foreground py-3 px-4">Time</th>
                 <th className="text-left text-[11px] font-medium text-muted-foreground py-3 px-4">Caller</th>
                 <th className="text-left text-[11px] font-medium text-muted-foreground py-3 px-4">Direction</th>
@@ -119,7 +119,7 @@ export default function VoiceCalls() {
                 <tr
                   key={call.id}
                   onClick={() => setSelectedCall(call)}
-                  className="border-b border-[#1a1a1a] last:border-0 cursor-pointer hover:bg-[#161616] transition-colors"
+                  className="border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50 transition-colors"
                   data-testid={`call-row-${call.id}`}
                 >
                   <td className="py-3 px-4 text-xs text-foreground">{formatTime(call.timestamp)}</td>
@@ -130,9 +130,9 @@ export default function VoiceCalls() {
                   <td className="py-3 px-4">
                     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                       {call.direction === "inbound" ? (
-                        <ArrowDownRight className="h-3 w-3 text-emerald-400" />
+                        <ArrowDownRight className="h-3 w-3 text-emerald-600" />
                       ) : (
-                        <ArrowUpRight className="h-3 w-3 text-blue-400" />
+                        <ArrowUpRight className="h-3 w-3 text-blue-600" />
                       )}
                       {call.direction}
                     </span>
@@ -162,8 +162,8 @@ export default function VoiceCalls() {
       {selectedCall && (
         <div className="fixed inset-0 z-50 flex justify-end" data-testid="transcript-panel">
           <div className="absolute inset-0 bg-black/60" onClick={() => setSelectedCall(null)} />
-          <div className="relative w-full max-w-lg bg-[#111] border-l border-[#1e1e1e] overflow-auto">
-            <div className="sticky top-0 bg-[#111] border-b border-[#1e1e1e] p-5 flex items-center justify-between z-10">
+          <div className="relative w-full max-w-lg bg-white border-l border-gray-200 overflow-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 p-5 flex items-center justify-between z-10">
               <div>
                 <h3 className="text-sm font-semibold text-foreground">{selectedCall.callerName}</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -172,7 +172,7 @@ export default function VoiceCalls() {
               </div>
               <button
                 onClick={() => setSelectedCall(null)}
-                className="h-8 w-8 rounded-md flex items-center justify-center hover:bg-[#1a1a1a] transition-colors"
+                className="h-8 w-8 rounded-md flex items-center justify-center hover:bg-gray-100 transition-colors"
                 data-testid="button-close-transcript"
               >
                 <X className="h-4 w-4" />
@@ -180,7 +180,7 @@ export default function VoiceCalls() {
             </div>
 
             {/* Call metadata */}
-            <div className="p-5 border-b border-[#1a1a1a]">
+            <div className="p-5 border-b border-gray-100">
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { label: "Vehicle", value: selectedCall.vehicle || "--" },
@@ -206,7 +206,7 @@ export default function VoiceCalls() {
                   <div key={i}>
                     <div className="flex items-center gap-2 mb-1">
                       <span className={`text-[11px] font-semibold ${
-                        msg.speaker === "Maria" ? "text-[#d4a843]" : "text-blue-400"
+                        msg.speaker === "Maria" ? "text-gray-700" : "text-blue-600"
                       }`}>
                         {msg.speaker}
                       </span>
@@ -214,14 +214,14 @@ export default function VoiceCalls() {
                     </div>
                     <p className="text-xs text-foreground/80 leading-relaxed">{msg.text}</p>
                     {msg.toolCall && (
-                      <div className="mt-2 rounded-md bg-[#0a0a0a] border border-[#1e1e1e] p-3">
-                        <p className="text-[10px] text-[#d4a843] font-mono mb-1">
+                      <div className="mt-2 rounded-md bg-gray-50 border border-gray-200 p-3">
+                        <p className="text-[10px] text-gray-700 font-mono mb-1">
                           tool_call: {msg.toolCall.name}
                         </p>
                         <p className="text-[10px] text-muted-foreground font-mono break-all">
                           {msg.toolCall.args}
                         </p>
-                        <p className="text-[10px] text-emerald-400 font-mono mt-1">
+                        <p className="text-[10px] text-emerald-600 font-mono mt-1">
                           {msg.toolCall.result}
                         </p>
                       </div>

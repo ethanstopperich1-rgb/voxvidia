@@ -79,25 +79,25 @@ export default function Overview() {
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Call Volume by Hour */}
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-5">
+        <div className="rounded-lg border border-gray-200 bg-white p-5">
           <div className="mb-4">
             <h2 className="text-sm font-medium text-foreground">Call Volume by Hour</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              <span className="inline-block w-2 h-2 rounded-full bg-[#d4a843] mr-1.5 align-middle" />
+              <span className="inline-block w-2 h-2 rounded-full bg-gray-700 mr-1.5 align-middle" />
               Business hours
-              <span className="inline-block w-2 h-2 rounded-full bg-[#d4a843]/40 mr-1.5 ml-3 align-middle" />
+              <span className="inline-block w-2 h-2 rounded-full bg-gray-700/40 mr-1.5 ml-3 align-middle" />
               After hours (AI advantage)
             </p>
           </div>
           <div className="h-[220px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={callVolumeByHour} barCategoryGap="20%">
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                 <XAxis
                   dataKey="hour"
                   tick={{ fontSize: 10, fill: "#666" }}
                   tickLine={false}
-                  axisLine={{ stroke: "#1e1e1e" }}
+                  axisLine={{ stroke: "#e5e7eb" }}
                   interval={2}
                 />
                 <YAxis
@@ -108,7 +108,7 @@ export default function Overview() {
                 />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: "#161616",
+                    backgroundColor: "#ffffff",
                     border: "1px solid #2a2a2a",
                     borderRadius: "8px",
                     color: "#e5e5e5",
@@ -119,7 +119,7 @@ export default function Overview() {
                   {callVolumeByHour.map((entry, index) => (
                     <Cell
                       key={index}
-                      fill={entry.afterHours ? "rgba(212, 168, 67, 0.35)" : "#d4a843"}
+                      fill={entry.afterHours ? "rgba(75, 85, 99, 0.35)" : "#4B5563"}
                     />
                   ))}
                 </Bar>
@@ -129,7 +129,7 @@ export default function Overview() {
         </div>
 
         {/* Conversion Funnel */}
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-5">
+        <div className="rounded-lg border border-gray-200 bg-white p-5">
           <div className="mb-4">
             <h2 className="text-sm font-medium text-foreground">Conversion Funnel</h2>
             <p className="text-xs text-muted-foreground mt-0.5">Today's call-to-appointment pipeline</p>
@@ -144,14 +144,14 @@ export default function Overview() {
                     <span className="text-muted-foreground ml-1">({step.percentage}%)</span>
                   </span>
                 </div>
-                <div className="h-2 rounded-full bg-[#1a1a1a] overflow-hidden">
+                <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{
                       width: `${step.percentage}%`,
                       backgroundColor:
                         i === 0
-                          ? "#d4a843"
+                          ? "#4B5563"
                           : i === 1
                           ? "#c09a3d"
                           : i === 2
@@ -171,13 +171,13 @@ export default function Overview() {
       {/* Bottom Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Activity Feed */}
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-5">
+        <div className="rounded-lg border border-gray-200 bg-white p-5">
           <h2 className="text-sm font-medium text-foreground mb-4">Recent Activity</h2>
           <div className="space-y-0">
             {activityFeed.map((item) => (
               <div
                 key={item.id}
-                className="flex items-start gap-3 py-2.5 border-b border-[#1a1a1a] last:border-0"
+                className="flex items-start gap-3 py-2.5 border-b border-gray-100 last:border-0"
                 data-testid={`activity-item-${item.id}`}
               >
                 <div
@@ -185,7 +185,7 @@ export default function Overview() {
                     item.type === "appointment"
                       ? "bg-emerald-400"
                       : item.type === "scan"
-                      ? "bg-[#d4a843]"
+                      ? "bg-gray-700"
                       : item.type === "transfer"
                       ? "bg-blue-400"
                       : "bg-muted-foreground"
@@ -201,12 +201,12 @@ export default function Overview() {
         </div>
 
         {/* Campaign Performance */}
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-5">
+        <div className="rounded-lg border border-gray-200 bg-white p-5">
           <h2 className="text-sm font-medium text-foreground mb-4">Campaign Performance</h2>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-[#1a1a1a]">
+                <tr className="border-b border-gray-100">
                   <th className="text-left text-[11px] font-medium text-muted-foreground pb-2.5 pr-4">Campaign</th>
                   <th className="text-right text-[11px] font-medium text-muted-foreground pb-2.5 px-2">Mailed</th>
                   <th className="text-right text-[11px] font-medium text-muted-foreground pb-2.5 px-2">Scans</th>
@@ -216,12 +216,12 @@ export default function Overview() {
               </thead>
               <tbody>
                 {campaignSummary.map((c) => (
-                  <tr key={c.name} className="border-b border-[#1a1a1a] last:border-0">
+                  <tr key={c.name} className="border-b border-gray-100 last:border-0">
                     <td className="py-2.5 pr-4 text-xs text-foreground">{c.name}</td>
                     <td className="py-2.5 px-2 text-xs text-muted-foreground text-right">{c.piecesMailed.toLocaleString()}</td>
                     <td className="py-2.5 px-2 text-xs text-muted-foreground text-right">{c.qrScans}</td>
                     <td className="py-2.5 px-2 text-xs text-foreground text-right font-medium">{c.appointments}</td>
-                    <td className="py-2.5 pl-2 text-xs text-emerald-400 text-right font-medium">{c.conversionRate}%</td>
+                    <td className="py-2.5 pl-2 text-xs text-emerald-600 text-right font-medium">{c.conversionRate}%</td>
                   </tr>
                 ))}
               </tbody>

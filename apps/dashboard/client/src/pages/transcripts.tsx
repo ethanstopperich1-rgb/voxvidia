@@ -5,17 +5,17 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 
 const outcomeBadge: Record<string, { label: string; className: string }> = {
-  appointment_set: { label: "Appointment Set", className: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
-  follow_up: { label: "Follow Up", className: "bg-[#d4a843]/10 text-[#d4a843] border-[#d4a843]/20" },
-  declined: { label: "Declined", className: "bg-rose-400/10 text-rose-400 border-rose-400/20" },
-  transferred: { label: "Transferred", className: "bg-blue-400/10 text-blue-400 border-blue-400/20" },
-  no_answer: { label: "No Answer", className: "bg-[#555]/10 text-[#888] border-[#555]/20" },
+  appointment_set: { label: "Appointment Set", className: "bg-emerald-50 text-emerald-600 border-emerald-400/20" },
+  follow_up: { label: "Follow Up", className: "bg-gray-700/10 text-gray-700 border-gray-300" },
+  declined: { label: "Declined", className: "bg-red-50 text-red-600 border-rose-400/20" },
+  transferred: { label: "Transferred", className: "bg-blue-50 text-blue-600 border-blue-400/20" },
+  no_answer: { label: "No Answer", className: "bg-gray-400/10 text-gray-500 border-gray-300" },
 };
 
 const sentimentBadge: Record<string, { label: string; className: string }> = {
-  positive: { label: "Positive", className: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
-  neutral: { label: "Neutral", className: "bg-[#555]/10 text-[#888] border-[#555]/20" },
-  negative: { label: "Negative", className: "bg-rose-400/10 text-rose-400 border-rose-400/20" },
+  positive: { label: "Positive", className: "bg-emerald-50 text-emerald-600 border-emerald-400/20" },
+  neutral: { label: "Neutral", className: "bg-gray-400/10 text-gray-500 border-gray-300" },
+  negative: { label: "Negative", className: "bg-red-50 text-red-600 border-rose-400/20" },
 };
 
 function formatDuration(seconds: number): string {
@@ -63,7 +63,7 @@ export default function Transcripts() {
           placeholder="Search by name, phone, vehicle, or transcript content..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-9 bg-[#111] border-[#1e1e1e] text-sm placeholder:text-muted-foreground/50"
+          className="pl-9 bg-white border-gray-200 text-sm placeholder:text-muted-foreground/50"
           data-testid="input-search-transcripts"
         />
       </div>
@@ -73,14 +73,14 @@ export default function Transcripts() {
         {filteredTranscripts.map((call) => (
           <div
             key={call.id}
-            className="rounded-lg border border-[#1e1e1e] bg-[#111] p-4 hover:border-[#2a2a2a] transition-colors cursor-pointer"
+            className="rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors cursor-pointer"
             onClick={() => setSelectedTranscript(call)}
             data-testid={`transcript-card-${call.id}`}
           >
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#1a1a1a]">
-                  <Phone className="h-4 w-4 text-[#d4a843]" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-100">
+                  <Phone className="h-4 w-4 text-gray-700" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
@@ -116,7 +116,7 @@ export default function Transcripts() {
         ))}
 
         {filteredTranscripts.length === 0 && (
-          <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-12 text-center">
+          <div className="rounded-lg border border-gray-200 bg-white p-12 text-center">
             <Search className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
             <p className="text-sm text-muted-foreground">No transcripts match your search</p>
           </div>
@@ -127,11 +127,11 @@ export default function Transcripts() {
       {selectedTranscript && (
         <div className="fixed inset-0 z-50 flex justify-end" data-testid="full-transcript-panel">
           <div className="absolute inset-0 bg-black/60" onClick={() => setSelectedTranscript(null)} />
-          <div className="relative w-full max-w-lg bg-[#111] border-l border-[#1e1e1e] overflow-auto">
-            <div className="sticky top-0 bg-[#111] border-b border-[#1e1e1e] p-5 flex items-center justify-between z-10">
+          <div className="relative w-full max-w-lg bg-white border-l border-gray-200 overflow-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 p-5 flex items-center justify-between z-10">
               <div>
                 <div className="flex items-center gap-2">
-                  <Phone className="h-4 w-4 text-[#d4a843]" />
+                  <Phone className="h-4 w-4 text-gray-700" />
                   <h3 className="text-sm font-semibold text-foreground">{selectedTranscript.callerName}</h3>
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -140,7 +140,7 @@ export default function Transcripts() {
               </div>
               <button
                 onClick={() => setSelectedTranscript(null)}
-                className="h-8 w-8 rounded-md flex items-center justify-center hover:bg-[#1a1a1a] transition-colors"
+                className="h-8 w-8 rounded-md flex items-center justify-center hover:bg-gray-100 transition-colors"
                 data-testid="button-close-full-transcript"
               >
                 <X className="h-4 w-4" />
@@ -148,7 +148,7 @@ export default function Transcripts() {
             </div>
 
             {/* Badges */}
-            <div className="p-5 border-b border-[#1a1a1a] flex items-center gap-2 flex-wrap">
+            <div className="p-5 border-b border-gray-100 flex items-center gap-2 flex-wrap">
               <Badge variant="outline" className={`text-[11px] border ${outcomeBadge[selectedTranscript.outcome].className}`}>
                 {outcomeBadge[selectedTranscript.outcome].label}
               </Badge>
@@ -164,7 +164,7 @@ export default function Transcripts() {
                 <div key={i}>
                   <div className="flex items-center gap-2 mb-1">
                     <span className={`text-[11px] font-semibold ${
-                      msg.speaker === "Maria" ? "text-[#d4a843]" : "text-blue-400"
+                      msg.speaker === "Maria" ? "text-gray-700" : "text-blue-600"
                     }`}>
                       {msg.speaker}
                     </span>
@@ -172,14 +172,14 @@ export default function Transcripts() {
                   </div>
                   <p className="text-xs text-foreground/80 leading-relaxed">{msg.text}</p>
                   {msg.toolCall && (
-                    <div className="mt-2 rounded-md bg-[#0a0a0a] border border-[#1e1e1e] p-3">
-                      <p className="text-[10px] text-[#d4a843] font-mono mb-1">
+                    <div className="mt-2 rounded-md bg-gray-50 border border-gray-200 p-3">
+                      <p className="text-[10px] text-gray-700 font-mono mb-1">
                         tool_call: {msg.toolCall.name}
                       </p>
                       <p className="text-[10px] text-muted-foreground font-mono break-all">
                         {msg.toolCall.args}
                       </p>
-                      <p className="text-[10px] text-emerald-400 font-mono mt-1">
+                      <p className="text-[10px] text-emerald-600 font-mono mt-1">
                         {msg.toolCall.result}
                       </p>
                     </div>

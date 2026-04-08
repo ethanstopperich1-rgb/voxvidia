@@ -4,21 +4,21 @@ import { appointments, type Appointment } from "@/lib/mock-data";
 import { Badge } from "@/components/ui/badge";
 
 const statusBadge: Record<string, { label: string; className: string }> = {
-  scheduled: { label: "Scheduled", className: "bg-blue-400/10 text-blue-400 border-blue-400/20" },
-  confirmed: { label: "Confirmed", className: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
-  completed: { label: "Completed", className: "bg-[#555]/10 text-[#888] border-[#555]/20" },
-  no_show: { label: "No Show", className: "bg-rose-400/10 text-rose-400 border-rose-400/20" },
+  scheduled: { label: "Scheduled", className: "bg-blue-50 text-blue-600 border-blue-400/20" },
+  confirmed: { label: "Confirmed", className: "bg-emerald-50 text-emerald-600 border-emerald-400/20" },
+  completed: { label: "Completed", className: "bg-gray-400/10 text-gray-500 border-gray-300" },
+  no_show: { label: "No Show", className: "bg-red-50 text-red-600 border-rose-400/20" },
 };
 
 const sourceBadge: Record<string, { label: string; className: string }> = {
-  voice_ai: { label: "Voice AI", className: "bg-[#d4a843]/10 text-[#d4a843] border-[#d4a843]/20" },
-  talking_postcard: { label: "Talking Postcard", className: "bg-purple-400/10 text-purple-400 border-purple-400/20" },
+  voice_ai: { label: "Voice AI", className: "bg-gray-700/10 text-gray-700 border-gray-300" },
+  talking_postcard: { label: "Talking Postcard", className: "bg-purple-50 text-purple-600 border-purple-400/20" },
 };
 
 const crmBadge: Record<string, { label: string; className: string }> = {
-  synced: { label: "Synced", className: "text-emerald-400" },
-  pending: { label: "Pending", className: "text-[#d4a843]" },
-  failed: { label: "Failed", className: "text-rose-400" },
+  synced: { label: "Synced", className: "text-emerald-600" },
+  pending: { label: "Pending", className: "text-gray-700" },
+  failed: { label: "Failed", className: "text-red-600" },
 };
 
 function formatDateTime(ts: string): string {
@@ -71,11 +71,11 @@ export default function Appointments() {
           <h1 className="text-xl font-semibold text-foreground">Appointments</h1>
           <p className="text-sm text-muted-foreground mt-1">All appointments from Voice AI and Talking Postcard</p>
         </div>
-        <div className="flex items-center gap-1 rounded-md border border-[#1e1e1e] bg-[#111] p-1">
+        <div className="flex items-center gap-1 rounded-md border border-gray-200 bg-white p-1">
           <button
             onClick={() => setView("list")}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              view === "list" ? "bg-[#1a1a1a] text-foreground" : "text-muted-foreground hover:text-foreground"
+              view === "list" ? "bg-gray-100 text-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
             data-testid="button-list-view"
           >
@@ -84,7 +84,7 @@ export default function Appointments() {
           <button
             onClick={() => setView("calendar")}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              view === "calendar" ? "bg-[#1a1a1a] text-foreground" : "text-muted-foreground hover:text-foreground"
+              view === "calendar" ? "bg-gray-100 text-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
             data-testid="button-calendar-view"
           >
@@ -95,21 +95,21 @@ export default function Appointments() {
 
       {/* Quick Stats */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-3">
+        <div className="rounded-lg border border-gray-200 bg-white p-3">
           <p className="text-[11px] text-muted-foreground">Total</p>
           <p className="text-lg font-semibold text-foreground">{appointments.length}</p>
         </div>
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-3">
+        <div className="rounded-lg border border-gray-200 bg-white p-3">
           <p className="text-[11px] text-muted-foreground">Voice AI</p>
-          <p className="text-lg font-semibold text-[#d4a843]">{voiceAiCount}</p>
+          <p className="text-lg font-semibold text-gray-700">{voiceAiCount}</p>
         </div>
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-3">
+        <div className="rounded-lg border border-gray-200 bg-white p-3">
           <p className="text-[11px] text-muted-foreground">Talking Postcard</p>
-          <p className="text-lg font-semibold text-purple-400">{postcardCount}</p>
+          <p className="text-lg font-semibold text-purple-600">{postcardCount}</p>
         </div>
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-3">
+        <div className="rounded-lg border border-gray-200 bg-white p-3">
           <p className="text-[11px] text-muted-foreground">Show Rate</p>
-          <p className="text-lg font-semibold text-emerald-400">
+          <p className="text-lg font-semibold text-emerald-600">
             {((confirmedCount + appointments.filter(a=>a.status==="completed").length - noShowCount) / appointments.length * 100).toFixed(0)}%
           </p>
         </div>
@@ -117,11 +117,11 @@ export default function Appointments() {
 
       {view === "list" ? (
         /* List View */
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] overflow-hidden">
+        <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-[#1a1a1a] bg-[#0d0d0d]">
+                <tr className="border-b border-gray-100 bg-gray-50">
                   <th className="text-left text-[11px] font-medium text-muted-foreground py-3 px-4">Date/Time</th>
                   <th className="text-left text-[11px] font-medium text-muted-foreground py-3 px-4">Customer</th>
                   <th className="text-left text-[11px] font-medium text-muted-foreground py-3 px-4">Vehicle</th>
@@ -135,7 +135,7 @@ export default function Appointments() {
                 {sortedAppointments.map((apt) => (
                   <tr
                     key={apt.id}
-                    className="border-b border-[#1a1a1a] last:border-0 hover:bg-[#161616] transition-colors"
+                    className="border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors"
                     data-testid={`appointment-row-${apt.id}`}
                   >
                     <td className="py-3 px-4 text-xs text-foreground whitespace-nowrap">{formatDateTime(apt.dateTime)}</td>
@@ -168,17 +168,17 @@ export default function Appointments() {
         </div>
       ) : (
         /* Calendar View */
-        <div className="rounded-lg border border-[#1e1e1e] bg-[#111] p-4">
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
           <div className="grid grid-cols-7 gap-2">
             {weekDays.map((day) => {
               const dayStr = day.toISOString().split("T")[0];
               const dayAppts = sortedAppointments.filter((a) => a.dateTime.startsWith(dayStr));
               const isToday = dayStr === "2025-01-14";
               return (
-                <div key={dayStr} className={`rounded-md p-2 min-h-[200px] ${isToday ? "bg-[#1a1a1a] ring-1 ring-[#d4a843]/30" : "bg-[#0d0d0d]"}`}>
+                <div key={dayStr} className={`rounded-md p-2 min-h-[200px] ${isToday ? "bg-gray-100 ring-1 ring-gray-300" : "bg-gray-50"}`}>
                   <div className="text-center mb-2">
                     <p className="text-[10px] text-muted-foreground">{day.toLocaleDateString("en-US", { weekday: "short" })}</p>
-                    <p className={`text-sm font-semibold ${isToday ? "text-[#d4a843]" : "text-foreground"}`}>
+                    <p className={`text-sm font-semibold ${isToday ? "text-gray-700" : "text-foreground"}`}>
                       {day.getDate()}
                     </p>
                   </div>
@@ -187,7 +187,7 @@ export default function Appointments() {
                       <div
                         key={apt.id}
                         className={`rounded px-1.5 py-1 text-[10px] leading-tight ${
-                          apt.source === "voice_ai" ? "bg-[#d4a843]/10 text-[#d4a843]" : "bg-purple-400/10 text-purple-400"
+                          apt.source === "voice_ai" ? "bg-gray-700/10 text-gray-700" : "bg-purple-50 text-purple-600"
                         }`}
                       >
                         <span className="font-medium">{formatTimeShort(apt.dateTime)}</span>
