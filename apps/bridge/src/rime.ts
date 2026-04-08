@@ -121,14 +121,6 @@ export function createRimeConnection(
       speaking = true;
       callbacks.onAudio(buf);
     }
-    } catch (_e) {
-      // Not JSON — likely raw binary audio
-      const buf = Buffer.from(data as any);
-      if (buf.length > 0) {
-        speaking = true;
-        callbacks.onAudio(buf);
-      }
-    }
   });
 
   ws.on('error', (err: Error) => {
