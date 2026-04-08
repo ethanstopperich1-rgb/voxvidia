@@ -38,51 +38,63 @@ import {
   handleEnrichedOutboundCall,
   validateTwilioSignature,
 } from './twilio.js';
-import { Orchestrator, IntentRouter, ToolRunner, ToolRegistry, ConfirmationPolicy } from '@voxvidia/orchestrator';
-import { StubCalendarAdapter } from '@voxvidia/orchestrator';
-import { StubCrmAdapter } from '@voxvidia/orchestrator';
-import { registerCalendarTools, registerCrmTools } from '@voxvidia/orchestrator';
+import { ToolRunner, ToolRegistry } from '@voxvidia/orchestrator';
 
 const logger = createLogger('bridge:server');
 const sessions = new SessionManager();
 
-// ── Orchestrator + Tool Runner setup ────────────────────────────────────────
-const calendarAdapter = new StubCalendarAdapter();
-const crmAdapter = new StubCrmAdapter();
+// ── Tool Runner setup (VIP Buyback stubs) ──────────────────────────────────
 const toolRegistry = new ToolRegistry();
-registerCalendarTools(toolRegistry, calendarAdapter);
-registerCrmTools(toolRegistry, crmAdapter);
 
-// Register LLM tool names (GPT-4.1 mini uses these names via function calling)
-// Map them to the same adapters the orchestrator uses
-toolRegistry.register('check_availability', async (args) => {
-  return calendarAdapter.getTodayEvents(args.timezone as string | undefined);
+toolRegistry.register('get_buyback_lead_context', async (_args) => {
+  return {
+    lead_id: 'lead_abc123',
+    customer_name: 'Marcus Johnson',
+    vehicle: '2021 Toyota Camry SE',
+    mailer_campaign: 'spring_buyback_2026',
+    status: 'new',
+  };
 });
-toolRegistry.register('book_appointment', async (args) => {
-  return calendarAdapter.createEvent({
-    summary: `${args.service_type || 'Service'} appointment`,
-    date: args.date as string || 'tomorrow',
-    time: args.time as string || '10:00 AM',
-    durationMinutes: 60,
-  });
+
+toolRegistry.register('update_lead_status', async (args) => {
+  return { updated: true, lead_id: args.lead_id };
 });
-toolRegistry.register('lookup_contact', async (args) => {
-  return crmAdapter.findContactByPhone(args.phone_number as string || '');
+
+toolRegistry.register('get_appraisal_slots', async (_args) => {
+  return {
+    slots: [
+      { slot_id: 'slot_fri_10am', date: 'Friday, April 11', time: '10:00 AM', available: true },
+      { slot_id: 'slot_fri_2pm', date: 'Friday, April 11', time: '2:00 PM', available: true },
+    ],
+  };
 });
-toolRegistry.register('transfer_to_human', async (args) => {
-  return { transferred: true, department: args.department, reason: args.reason };
+
+toolRegistry.register('book_appraisal_appointment', async (_args) => {
+  return {
+    booked: true,
+    confirmation: 'VX-' + Date.now().toString().slice(-6),
+    date: 'Friday, April 11',
+    time: '10:00 AM',
+    duration: '15 minutes',
+  };
 });
-toolRegistry.register('send_follow_up_sms', async (args) => {
-  return { sent: true, contactId: args.contact_id, message: args.message };
+
+toolRegistry.register('save_callback_number', async (args) => {
+  return {
+    saved: true,
+    normalized: '+1' + (args.callback_phone_raw as string || '').replace(/\D/g, ''),
+  };
+});
+
+toolRegistry.register('transfer_to_vip_desk', async (args) => {
+  return { transferred: true, department: 'VIP Desk', reason: args.transfer_reason };
+});
+
+toolRegistry.register('log_call_outcome', async (args) => {
+  return { logged: true, outcome: args.final_outcome };
 });
 
 const toolRunner = new ToolRunner(toolRegistry);
-
-const orchestrator = new Orchestrator({
-  intentRouter: new IntentRouter(),
-  toolRunner,
-  confirmationPolicy: new ConfirmationPolicy(),
-});
 
 // ── Express app ───────────────────────────────────────────────────────────────
 
@@ -261,7 +273,7 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
 
         // 6. Function to handle LLM tool calls (with retry limit)
         let toolCallCount = 0;
-        const MAX_TOOL_CALLS = 3;
+        const MAX_TOOL_CALLS = 8;
         const handleToolCall = async (toolCall: ToolCall) => {
           toolCallCount++;
           if (toolCallCount > MAX_TOOL_CALLS) {
@@ -272,8 +284,10 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           const toolName = toolCall.function.name;
           const filler = getFillerPhrase(toolName);
 
-          // Speak filler phrase while tool executes
-          speakText(filler);
+          // Speak filler phrase while tool executes (skip silent tools)
+          if (filler) {
+            speakText(filler);
+          }
 
           let args: Record<string, any>;
           try {
@@ -403,23 +417,6 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         }, callSid!);
         session.deepgramConn = deepgramConn;
 
-        // Wire orchestrator to process completed utterances.
-        session.transcript.setOnUtterance(async (utterance: string) => {
-          try {
-            const result = await orchestrator.processUtterance(callSid!, utterance);
-            if (result.action === 'speak' || result.action === 'confirm') {
-              // In the new pipeline, orchestrator results are informational.
-              // The LLM handles actual response generation via tool calls.
-              logger.debug('Orchestrator result', { callId: callSid, action: result.action, text: result.text });
-            }
-          } catch (err) {
-            logger.error('Orchestrator error', {
-              callId: callSid,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        });
-
         // 8. Generate AI greeting
         const greetingPrompt = session.llmMessages.slice(); // Copy messages
         streamChatCompletion(env.OPENAI_API_KEY || '', greetingPrompt, {
@@ -475,9 +472,6 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             }
           }
           sessions.end(callSid);
-
-          // Clean up orchestrator per-call state.
-          orchestrator.endCall(callSid);
 
           // Trigger post-call analysis asynchronously.
           import('@voxvidia/workers').then(({ processPostCall }) => {
