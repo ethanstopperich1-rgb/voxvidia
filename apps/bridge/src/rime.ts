@@ -17,11 +17,11 @@
 
 import WebSocket from 'ws';
 import { createLogger } from '@voxvidia/shared';
+import { encodeMulaw, resample, bufferToPcm } from './audio.js';
 
 const logger = createLogger('bridge:rime');
 
-// Use /ws endpoint (not ws3) — supports audioFormat=mulaw natively
-const RIME_WS_BASE = 'wss://users-ws.rime.ai/ws';
+const RIME_WS_BASE = 'wss://users-ws.rime.ai/ws3';
 
 export interface RimeCallbacks {
   /** Called with mulaw audio bytes — send directly to Twilio. */
@@ -66,8 +66,8 @@ export function createRimeConnection(
   const params = new URLSearchParams({
     speaker: voice,
     modelId: 'mistv3',
-    audioFormat: 'mulaw',
-    samplingRate: '8000',
+    audioFormat: 'pcm',
+    samplingRate: '22050',
   });
 
   const url = `${RIME_WS_BASE}?${params.toString()}`;
@@ -89,30 +89,47 @@ export function createRimeConnection(
   });
 
   ws.on('message', (data: WebSocket.RawData) => {
-    // ws3 JSON protocol: ALL messages are JSON text, never raw binary.
-    // Audio: {"type": "chunk", "data": "<base64 mulaw audio>"}
-    // Done:  {"type": "done"} or {"type": "finished"}
-    // Error: {"type": "error", "message": "..."}
+    // ws3 sends BINARY frames for audio, TEXT frames for control
+    let buf: Buffer | null = null;
+    if (Buffer.isBuffer(data)) buf = data;
+    else if (data instanceof ArrayBuffer) buf = Buffer.from(data);
+    else if (Array.isArray(data)) buf = Buffer.concat(data);
+
+    // Binary frame with substantial data = raw PCM int16 at 22050Hz
+    if (buf !== null && buf.length > 100) {
+      try {
+        const pcm22k = bufferToPcm(buf);
+        const pcm8k = resample(pcm22k, 22050, 8000);
+        const mulaw = encodeMulaw(pcm8k);
+        speaking = true;
+        callbacks.onAudio(mulaw);
+      } catch (_e) {
+        // conversion error — skip this chunk
+      }
+      return;
+    }
+
+    // Text or small buffer = JSON control message
     try {
       const raw = typeof data === 'string' ? data : data.toString();
       const msg = JSON.parse(raw);
-
       if (msg.type === 'chunk' && msg.data) {
-        const audioBuf = Buffer.from(msg.data, 'base64');
-        if (audioBuf.length > 0) {
-          speaking = true;
-          callbacks.onAudio(audioBuf);
-        }
+        // JSON-wrapped base64 audio (fallback)
+        const pcmBytes = Buffer.from(msg.data, 'base64');
+        const pcm22k = bufferToPcm(pcmBytes);
+        const pcm8k = resample(pcm22k, 22050, 8000);
+        const mulaw = encodeMulaw(pcm8k);
+        speaking = true;
+        callbacks.onAudio(mulaw);
       } else if (msg.type === 'done' || msg.type === 'finished') {
         speaking = false;
         callbacks.onDone();
         logger.debug('Rime synthesis done', { callId });
       } else if (msg.type === 'error') {
-        logger.error('Rime error', { callId, error: msg });
-        callbacks.onError(new Error(msg.message || 'Rime TTS error'));
+        callbacks.onError(new Error(msg.message || 'Rime error'));
       }
     } catch (_e) {
-      logger.warn('Rime: failed to parse message', { callId });
+      // Not JSON, small binary — ignore
     }
   });
 
@@ -139,24 +156,24 @@ export function createRimeConnection(
 
       logger.debug('Rime speak', { callId, text: text.substring(0, 80) });
 
-      // /ws endpoint accepts plain text — Rime synthesizes and streams back audio
-      ws.send(text);
+      ws.send(JSON.stringify({ text }));
     },
 
     flush(): void {
-      // /ws endpoint auto-flushes on punctuation — no explicit flush needed
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ operation: 'flush' }));
     },
 
     clear(): void {
       if (ws.readyState !== WebSocket.OPEN) return;
       speaking = false;
-      // Close and reconnect for barge-in (ws endpoint doesn't have clear command)
+      ws.send(JSON.stringify({ operation: 'clear' }));
       logger.debug('Rime clear (barge-in)', { callId });
     },
 
     close(): void {
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close(1000, 'call ended');
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ operation: 'eos' })); } catch (_e) { /* */ }
+        setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(1000); }, 300);
       }
     },
 
