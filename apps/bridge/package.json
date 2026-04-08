@@ -15,6 +15,7 @@
     "@voxvidia/shared": "workspace:*",
     "@voxvidia/storage": "workspace:*",
     "@voxvidia/workers": "workspace:*",
+    "@supabase/supabase-js": "^2.49.1",
     "express": "^4.21.0",
     "esbuild": "^0.21.0",
     "twilio": "^5.3.0",

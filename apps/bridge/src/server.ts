@@ -19,6 +19,7 @@
 import http from 'node:http';
 import express from 'express';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createLogger, env } from '@voxvidia/shared';
 import { SessionManager } from './session.js';
 import { decodeMulaw, encodeMulaw, resample, pcmToBuffer, bufferToPcm } from './audio.js';
@@ -39,9 +40,36 @@ import {
   validateTwilioSignature,
 } from './twilio.js';
 import { ToolRunner, ToolRegistry } from '@voxvidia/orchestrator';
+import { runPostCallAnalysis, type CallData } from './post-call.js';
 
 const logger = createLogger('bridge:server');
 const sessions = new SessionManager();
+
+// ── Supabase client (singleton, skip if env vars missing) ────────────────────
+const DEALER_ID = '00000000-0000-0000-0000-000000000001'; // Orlando Motors
+
+let supabase: SupabaseClient | null = null;
+if (env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY) {
+  supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
+  logger.info('Supabase client initialized');
+} else {
+  logger.warn('SUPABASE_URL or SUPABASE_SERVICE_KEY not set — call data will NOT be persisted');
+}
+
+/** Fire-and-forget Supabase write. Logs errors but never throws. */
+function dbWrite(label: string, fn: (sb: SupabaseClient) => Promise<any>) {
+  if (!supabase) return;
+  fn(supabase).catch((err) => {
+    logger.error(`Supabase ${label} write failed`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+}
+
+// In-memory accumulators for post-call analysis (keyed by callSid)
+const callTranscripts = new Map<string, Array<{ speaker: string; text: string; timestamp_ms: number }>>();
+const callToolCalls = new Map<string, Array<{ name: string; args: any; result: any; success: boolean }>>();
+const callStartTimes = new Map<string, number>();
 
 // ── Tool Runner setup (VIP Buyback stubs) ──────────────────────────────────
 const toolRegistry = new ToolRegistry();
@@ -225,6 +253,24 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         );
         session.streamSid = streamSid;
 
+        // 1b. Track call start time and init accumulators for post-call
+        const callStartTime = Date.now();
+        callStartTimes.set(callSid, callStartTime);
+        callTranscripts.set(callSid, []);
+        callToolCalls.set(callSid, []);
+
+        // 1c. Insert call record into Supabase (fire-and-forget)
+        dbWrite('calls.insert', (sb) =>
+          sb.from('calls').insert({
+            call_sid: callSid,
+            dealer_id: DEALER_ID,
+            direction: 'inbound',
+            from_number: fromNumber || 'unknown',
+            to_number: toNumber || 'unknown',
+            status: 'active',
+          }),
+        );
+
         // 2. Build system prompt
         const systemPrompt = buildSystemPrompt({
           agentName: env.AGENT_NAME,
@@ -297,8 +343,26 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           }
 
           // Execute tool via orchestrator
+          const toolStartMs = Date.now();
           try {
             const result = await toolRunner.runTool(toolName, args);
+            const latencyMs = Date.now() - toolStartMs;
+
+            // Track tool call for post-call analysis
+            callToolCalls.get(callSid!)?.push({ name: toolName, args, result, success: true });
+
+            // Write tool call to Supabase (fire-and-forget)
+            dbWrite('call_tool_calls.insert', (sb) =>
+              sb.from('call_tool_calls').insert({
+                call_sid: callSid,
+                dealer_id: DEALER_ID,
+                tool_name: toolName,
+                arguments: args,
+                result,
+                latency_ms: latencyMs,
+                success: true,
+              }),
+            );
 
             // Add tool call + result to conversation
             session.llmMessages.push({
@@ -324,31 +388,81 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
               onDone: (text) => {
                 speakText(text);
                 session.llmMessages.push({ role: 'assistant', content: text });
+
+                // Write agent transcript to Supabase
+                const startTs = callStartTimes.get(callSid!) || Date.now();
+                callTranscripts.get(callSid!)?.push({ speaker: 'agent', text, timestamp_ms: Date.now() - startTs });
+                dbWrite('call_transcripts.insert(agent/tool)', (sb) =>
+                  sb.from('call_transcripts').insert({
+                    call_sid: callSid,
+                    dealer_id: DEALER_ID,
+                    speaker: 'agent',
+                    text,
+                    timestamp_ms: Date.now() - startTs,
+                  }),
+                );
               },
               onError: (err) => {
                 logger.error('LLM error after tool', { callId: callSid, error: err.message });
               },
             }, callSid!);
           } catch (err) {
+            const latencyMs = Date.now() - toolStartMs;
             logger.error('Tool execution error', {
               callId: callSid,
               tool: toolName,
               error: err instanceof Error ? err.message : String(err),
             });
+
+            // Track failed tool call
+            callToolCalls.get(callSid!)?.push({ name: toolName, args, result: null, success: false });
+            dbWrite('call_tool_calls.insert(error)', (sb) =>
+              sb.from('call_tool_calls').insert({
+                call_sid: callSid,
+                dealer_id: DEALER_ID,
+                tool_name: toolName,
+                arguments: args,
+                result: { error: err instanceof Error ? err.message : String(err) },
+                latency_ms: latencyMs,
+                success: false,
+              }),
+            );
+
             speakText("I'm sorry, I'm having a little trouble with that. Let me connect you with our team.");
           }
         };
 
         // 7. Connect to Deepgram STT
         const deepgramConn = createDeepgramConnection(env.DEEPGRAM_API_KEY || '', {
-          onTranscript: async (text, isFinal) => {
-            if (!isFinal) return;
-
+          onTranscript: async (text, isSpeechFinal) => {
+            // Accumulate all finalized segments
             session.transcript.onToken(text);
-            logger.info('Caller said', { callId: callSid, text });
 
-            // Add caller message to conversation
-            session.llmMessages.push({ role: 'user', content: text });
+            // Only send to LLM when the caller has FULLY finished speaking (speechFinal=true)
+            if (!isSpeechFinal) {
+              logger.debug('Deepgram partial segment (waiting for speechFinal)', { callId: callSid, text });
+              return;
+            }
+
+            // Get the full accumulated utterance
+            const fullUtterance = session.transcript.getLastUtterance() || text;
+            logger.info('Caller said', { callId: callSid, text: fullUtterance });
+
+            // Write caller transcript to Supabase (fire-and-forget)
+            const startTs = callStartTimes.get(callSid!) || Date.now();
+            callTranscripts.get(callSid!)?.push({ speaker: 'caller', text, timestamp_ms: Date.now() - startTs });
+            dbWrite('call_transcripts.insert(caller)', (sb) =>
+              sb.from('call_transcripts').insert({
+                call_sid: callSid,
+                dealer_id: DEALER_ID,
+                speaker: 'caller',
+                text,
+                timestamp_ms: Date.now() - startTs,
+              }),
+            );
+
+            // Add caller message to conversation (use full utterance, not partial segment)
+            session.llmMessages.push({ role: 'user', content: fullUtterance });
 
             // Get LLM response
             let responseBuffer = '';
@@ -380,6 +494,19 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
                 }
                 session.llmMessages.push({ role: 'assistant', content: fullText });
                 logger.info('Agent said', { callId: callSid, text: fullText });
+
+                // Write agent transcript to Supabase (fire-and-forget)
+                const startTs2 = callStartTimes.get(callSid!) || Date.now();
+                callTranscripts.get(callSid!)?.push({ speaker: 'agent', text: fullText, timestamp_ms: Date.now() - startTs2 });
+                dbWrite('call_transcripts.insert(agent)', (sb) =>
+                  sb.from('call_transcripts').insert({
+                    call_sid: callSid,
+                    dealer_id: DEALER_ID,
+                    speaker: 'agent',
+                    text: fullText,
+                    timestamp_ms: Date.now() - startTs2,
+                  }),
+                );
               },
               onError: (err) => {
                 logger.error('LLM error', { callId: callSid, error: err.message });
@@ -389,7 +516,7 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           },
           onInterim: (text) => {
             // Barge-in detection: caller is speaking while AI is talking
-            if (session.rimeIsSpeaking && text.length > 3) {
+            if (session.rimeIsSpeaking && text.split(' ').length >= 3) {
               // 1. Clear Rime's synthesis buffer
               rimeConn.clear();
               session.rimeIsSpeaking = false;
@@ -471,19 +598,94 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
               logger.info('Final transcript', { callId: callSid, transcript });
             }
           }
+
+          // Calculate duration
+          const callStart = callStartTimes.get(callSid) || Date.now();
+          const durationSeconds = Math.round((Date.now() - callStart) / 1000);
+
+          // Update call record in Supabase (fire-and-forget)
+          dbWrite('calls.update(completed)', (sb) =>
+            sb
+              .from('calls')
+              .update({
+                status: 'completed',
+                ended_at: new Date().toISOString(),
+                duration_seconds: durationSeconds,
+              })
+              .eq('call_sid', callSid),
+          );
+
+          // Gather transcript + tool call data for post-call analysis
+          const transcriptData = callTranscripts.get(callSid) || [];
+          const toolCallData = callToolCalls.get(callSid) || [];
+
+          // Clean up in-memory accumulators
+          callStartTimes.delete(callSid);
+          callTranscripts.delete(callSid);
+          callToolCalls.delete(callSid);
+
           sessions.end(callSid);
 
-          // Trigger post-call analysis asynchronously.
-          import('@voxvidia/workers').then(({ processPostCall }) => {
-            processPostCall(callSid).catch((err) => {
-              logger.error('Post-call worker error', {
-                callId: callSid,
-                error: err instanceof Error ? err.message : String(err),
+          // Run post-call analysis asynchronously (this one we DO await internally)
+          if (supabase && env.OPENAI_API_KEY && transcriptData.length > 0) {
+            const analysisCallSid = callSid; // capture for closure
+            (async () => {
+              try {
+                const callDataForAnalysis: CallData = {
+                  callSid: analysisCallSid,
+                  dealerId: DEALER_ID,
+                  transcript: transcriptData,
+                  toolCalls: toolCallData,
+                  durationSeconds,
+                };
+
+                const analysis = await runPostCallAnalysis(
+                  env.OPENAI_API_KEY!,
+                  callDataForAnalysis,
+                );
+
+                await supabase!.from('call_analysis').insert({
+                  call_sid: analysisCallSid,
+                  dealer_id: DEALER_ID,
+                  summary: analysis.summary,
+                  lead_outcome: analysis.lead_outcome,
+                  sentiment: analysis.sentiment,
+                  customer_name: analysis.customer_name,
+                  customer_vehicle: analysis.customer_vehicle,
+                  still_owns_vehicle: analysis.still_owns_vehicle,
+                  appointment_booked: analysis.appointment_booked,
+                  appointment_date: analysis.appointment_date,
+                  appointment_time: analysis.appointment_time,
+                  follow_up_needed: analysis.follow_up_needed,
+                  follow_up_action: analysis.follow_up_action,
+                  qa_flags: analysis.qa_flags,
+                });
+
+                logger.info('Post-call analysis persisted', { callSid: analysisCallSid });
+              } catch (err) {
+                logger.error('Post-call analysis error', {
+                  callId: analysisCallSid,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            })();
+          } else {
+            // Fallback to workers package if Supabase is not configured
+            import('@voxvidia/workers')
+              .then(({ processPostCall }) => {
+                processPostCall(callSid!).catch((err) => {
+                  logger.error('Post-call worker error', {
+                    callId: callSid,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                });
+              })
+              .catch(() => {
+                logger.warn('Workers package not available, skipping post-call analysis', {
+                  callId: callSid,
+                });
               });
-            });
-          }).catch(() => {
-            logger.warn('Workers package not available, skipping post-call analysis', { callId: callSid });
-          });
+          }
         }
         break;
       }

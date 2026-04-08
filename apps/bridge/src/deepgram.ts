@@ -95,12 +95,16 @@ export function createDeepgramConnection(
 
         if (transcript.length === 0) return;
 
-        if (isFinal) {
-          // Final transcript segment — send to LLM
+        if (isFinal && speechFinal) {
+          // Complete utterance — caller finished speaking. Send to LLM.
           callbacks.onTranscript(transcript, true);
-          logger.debug('Deepgram final transcript', { callId, text: transcript, speechFinal });
+          logger.debug('Deepgram speech-final transcript', { callId, text: transcript });
+        } else if (isFinal) {
+          // Partial segment finalized but caller may still be talking.
+          // Accumulate but don't trigger LLM yet — wait for speechFinal or utteranceEnd.
+          callbacks.onTranscript(transcript, false);
         } else {
-          // Interim result — use for barge-in detection
+          // Interim result — use for barge-in detection only
           callbacks.onInterim(transcript);
         }
       }
