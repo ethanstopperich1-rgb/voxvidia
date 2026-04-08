@@ -1,13 +1,5 @@
 FROM node:20-slim
 
-# Install Python 3 + pip for the Opus decoder sidecar
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip libopus-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install Python deps for Opus decoding
-RUN pip3 install --break-system-packages sphn numpy
-
 # Install pnpm
 RUN npm install -g pnpm
 
@@ -21,12 +13,12 @@ COPY apps/workers/package.json apps/workers/tsconfig.json apps/workers/
 COPY packages/shared/package.json packages/shared/tsconfig.json packages/shared/
 COPY packages/storage/package.json packages/storage/tsconfig.json packages/storage/
 
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 
 # Copy source and build
 COPY . .
 RUN pnpm build
 
-EXPOSE 10000
+EXPOSE 3000
 
 CMD ["node", "apps/bridge/dist/server.js"]

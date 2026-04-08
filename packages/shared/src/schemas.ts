@@ -11,7 +11,7 @@ export const CallRecordSchema = z.object({
   startedAt: z.string().datetime({ offset: true }),
   endedAt: z.string().datetime({ offset: true }).nullable(),
   recordingUrl: z.string().nullable(),
-  personaplexSessionId: z.string().nullable(),
+  personaplexSessionId: z.string().nullable(), // Legacy column — retained for DB compat
   latencyFirstAiMs: z.number().nullable(),
   latencyFirstToolResultMs: z.number().nullable(),
   createdAt: z.string().datetime({ offset: true }),

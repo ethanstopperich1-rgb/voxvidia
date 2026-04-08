@@ -2,7 +2,7 @@
   "name": "voxvidia",
   "version": "1.0.0",
   "private": true,
-  "description": "PersonaPlex voice agent system — Twilio bridge, tool orchestrator, post-call analytics",
+  "description": "Production voice AI platform — Deepgram Nova-3 + GPT-4.1 mini + Rime Mist v3 via Twilio",
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm --filter @voxvidia/bridge dev",

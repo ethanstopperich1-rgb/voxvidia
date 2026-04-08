@@ -1,8 +1,8 @@
 /**
- * Audio codec utilities for the Twilio <-> PersonaPlex bridge.
+ * Audio codec utilities for the Twilio <-> Deepgram bridge.
  *
  * Twilio Media Streams deliver 8 kHz mu-law (G.711).
- * PersonaPlex expects 24 kHz PCM (sent as Opus via its WS protocol).
+ * Deepgram Nova-3 expects 16 kHz linear16 PCM.
  *
  * This module provides:
  *   - mu-law decode (byte -> 16-bit signed PCM)
