@@ -17,7 +17,6 @@
 
 import WebSocket from 'ws';
 import { createLogger } from '@voxvidia/shared';
-import { encodeMulaw, resample, bufferToPcm } from './audio.js';
 
 const logger = createLogger('bridge:rime');
 
@@ -66,8 +65,8 @@ export function createRimeConnection(
   const params = new URLSearchParams({
     speaker: voice,
     modelId: 'mistv3',
-    audioFormat: 'pcm',
-    samplingRate: '22050',
+    audioFormat: 'mulaw',
+    samplingRate: '8000',
   });
 
   const url = `${RIME_WS_BASE}?${params.toString()}`;
@@ -89,47 +88,32 @@ export function createRimeConnection(
   });
 
   ws.on('message', (data: WebSocket.RawData) => {
-    // ws3 sends BINARY frames for audio, TEXT frames for control
-    let buf: Buffer | null = null;
-    if (Buffer.isBuffer(data)) buf = data;
-    else if (data instanceof ArrayBuffer) buf = Buffer.from(data);
-    else if (Array.isArray(data)) buf = Buffer.concat(data);
-
-    // Binary frame with substantial data = raw PCM int16 at 22050Hz
-    if (buf !== null && buf.length > 100) {
-      try {
-        const pcm22k = bufferToPcm(buf);
-        const pcm8k = resample(pcm22k, 22050, 8000);
-        const mulaw = encodeMulaw(pcm8k);
-        speaking = true;
-        callbacks.onAudio(mulaw);
-      } catch (_e) {
-        // conversion error — skip this chunk
-      }
-      return;
-    }
-
-    // Text or small buffer = JSON control message
+    // ws3 ALWAYS sends JSON — even though ws lib may return Buffer.
+    // Parse everything as JSON string.
     try {
       const raw = typeof data === 'string' ? data : data.toString();
       const msg = JSON.parse(raw);
+
       if (msg.type === 'chunk' && msg.data) {
-        // JSON-wrapped base64 audio (fallback)
-        const pcmBytes = Buffer.from(msg.data, 'base64');
-        const pcm22k = bufferToPcm(pcmBytes);
-        const pcm8k = resample(pcm22k, 22050, 8000);
-        const mulaw = encodeMulaw(pcm8k);
-        speaking = true;
-        callbacks.onAudio(mulaw);
+        // {"type":"chunk","data":"<base64 mulaw 8kHz>"} — send to Twilio directly
+        const mulawBytes = Buffer.from(msg.data, 'base64');
+        if (mulawBytes.length > 0) {
+          speaking = true;
+          callbacks.onAudio(mulawBytes);
+        }
       } else if (msg.type === 'done' || msg.type === 'finished') {
         speaking = false;
         callbacks.onDone();
         logger.debug('Rime synthesis done', { callId });
+      } else if (msg.type === 'timestamps') {
+        // Word timestamps — ignore for now
       } else if (msg.type === 'error') {
+        logger.error('Rime error', { callId, error: msg });
         callbacks.onError(new Error(msg.message || 'Rime error'));
       }
     } catch (_e) {
-      // Not JSON, small binary — ignore
+      // Parse error — log and skip
+      logger.warn('Rime unparseable message', { callId });
     }
   });
 
