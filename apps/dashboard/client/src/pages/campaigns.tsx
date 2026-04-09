@@ -29,12 +29,8 @@ export default function Campaigns() {
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
 
-  useEffect(() => {
-    fetch("/api/campaigns")
-      .then((r) => r.ok ? r.json() : [])
-      .then((data) => setCampaigns(data))
-      .catch(() => setCampaigns([]));
-  }, []);
+  // Campaigns table not in Supabase yet — show empty state
+  useEffect(() => { setCampaigns([]); }, []);
 
   return (
     <div className="p-6 space-y-6 overflow-auto h-full" data-testid="page-campaigns">

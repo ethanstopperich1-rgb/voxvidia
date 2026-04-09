@@ -36,10 +36,9 @@ export default function Transcripts() {
   const [voiceCalls, setVoiceCalls] = useState<VoiceCall[]>([]);
 
   useEffect(() => {
-    fetch("/api/voice-calls")
-      .then((r) => r.ok ? r.json() : [])
-      .then((data) => setVoiceCalls(data))
-      .catch(() => setVoiceCalls([]));
+    import("@/lib/supabase").then(({ fetchCalls }) =>
+      fetchCalls().then(data => setVoiceCalls(data as any)).catch(() => {})
+    );
   }, []);
 
   const allTranscripts = voiceCalls.filter((c) => c.transcript && c.transcript.length > 0);

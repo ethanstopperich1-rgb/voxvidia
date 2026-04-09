@@ -36,11 +36,9 @@ export default function VoiceCalls() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/voice-calls")
-      .then((r) => r.ok ? r.json() : [])
-      .then((data) => setVoiceCalls(data))
-      .catch(() => setVoiceCalls([]))
-      .finally(() => setLoading(false));
+    import("@/lib/supabase").then(({ fetchCalls }) =>
+      fetchCalls().then((data) => setVoiceCalls(data as any)).catch(() => {})
+    ).finally(() => setLoading(false));
   }, []);
 
   const filteredCalls = voiceCalls

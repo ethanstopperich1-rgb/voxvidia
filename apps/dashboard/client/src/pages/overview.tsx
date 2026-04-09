@@ -18,13 +18,12 @@ export default function Overview() {
   const [callVolumeByHour, setCallVolume] = useState<any[]>([]);
   const [activityFeed, setActivity] = useState<any[]>([]);
   const [conversionFunnel] = useState(mockFunnel);
-  const [campaignSummary] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch("/api/overview-stats").then(r => r.ok ? r.json() : null).then(d => setOverviewStats(d || { totalCallsToday: 0, appointmentsBooked: 0, conversionRate: 0, avgResponseTime: 0, avgCallDuration: 0, aiCost: "0.00", revenueImpact: 0, afterHoursCalls: 0, showRate: 0 })).catch(() => {});
-    fetch("/api/call-volume-hourly").then(r => r.ok ? r.json() : []).then(d => setCallVolume(d)).catch(() => {});
-    fetch("/api/activity-feed").then(r => r.ok ? r.json() : []).then(d => setActivity(d)).catch(() => {});
-    fetch("/api/campaigns").then(r => r.ok ? r.json() : []).catch(() => {});
+    import("@/lib/supabase").then(({ fetchOverviewStats, fetchActivityFeed }) => {
+      fetchOverviewStats().then(d => setOverviewStats(d || { totalCallsToday: 0, appointmentsBooked: 0, conversionRate: 0, avgResponseTime: 0, avgCallDuration: 0, aiCost: "0.00", revenueImpact: 0, showRate: 0 }));
+      fetchActivityFeed().then(d => setActivity(d));
+    });
   }, []);
 
   if (!overviewStats) return <div className="p-6 text-muted-foreground">Loading...</div>;

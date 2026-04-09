@@ -55,10 +55,9 @@ export default function Appointments() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
 
   useEffect(() => {
-    fetch("/api/appointments")
-      .then((r) => r.ok ? r.json() : [])
-      .then((data) => setAppointments(data))
-      .catch(() => setAppointments([]));
+    import("@/lib/supabase").then(({ fetchAppointments }) =>
+      fetchAppointments().then(data => setAppointments(data as any)).catch(() => {})
+    );
   }, []);
 
   const sortedAppointments = [...appointments].sort(
