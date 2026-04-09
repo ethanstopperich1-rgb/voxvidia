@@ -889,8 +889,9 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
               return;
             }
 
-            // Get the full accumulated utterance
-            const fullUtterance = session.transcript.getLastUtterance() || text;
+            // Get the full accumulated utterance (extract .text if it's an object)
+            const lastUtterance = session.transcript.getLastUtterance();
+            const fullUtterance = typeof lastUtterance === 'string' ? lastUtterance : (lastUtterance?.text || text);
             logger.info('Caller said', { callId: callSid, text: fullUtterance });
 
             // Write caller transcript to Supabase (fire-and-forget)

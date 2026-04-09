@@ -55,7 +55,7 @@ export async function handleIncomingCall(
       callSid,
       fromNumber,
       toNumber,
-      status: 'initiated',
+      status: 'active',
       startedAt: new Date().toISOString(),
     });
   } catch (err) {
@@ -111,11 +111,12 @@ export async function handleCallStatus(
       await completeCall(callSid, new Date().toISOString());
     } else {
       // Map Twilio status strings to our schema.
+      // Schema constraint: active, completed, failed, dropped
       const statusMap: Record<string, string> = {
-        queued: 'initiated',
-        initiated: 'initiated',
-        ringing: 'ringing',
-        'in-progress': 'answered',
+        queued: 'active',
+        initiated: 'active',
+        ringing: 'active',
+        'in-progress': 'active',
         completed: 'completed',
         busy: 'failed',
         'no-answer': 'failed',
@@ -123,9 +124,7 @@ export async function handleCallStatus(
         failed: 'failed',
       };
       const mappedStatus = statusMap[callStatus] as
-        | 'initiated'
-        | 'ringing'
-        | 'answered'
+        | 'active'
         | 'completed'
         | 'failed'
         | undefined;
@@ -301,7 +300,7 @@ export async function handleOutboundCall(
         callSid,
         fromNumber,
         toNumber: to,
-        status: 'initiated',
+        status: 'active',
         startedAt: new Date().toISOString(),
       });
     } catch (err) {
