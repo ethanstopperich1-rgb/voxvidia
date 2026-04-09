@@ -3,7 +3,7 @@ import { createLogger } from '@voxvidia/shared';
 import type { TranscriptEvent } from '@voxvidia/shared';
 
 const logger = createLogger('storage:transcripts');
-const TABLE = 'pp_transcript_events';
+const TABLE = 'call_transcripts';
 
 export interface AddTranscriptEventInput {
   callId: string;

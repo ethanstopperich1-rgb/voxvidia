@@ -3,7 +3,7 @@ import { createLogger } from '@voxvidia/shared';
 import type { ToolEvent } from '@voxvidia/shared';
 
 const logger = createLogger('storage:tool-events');
-const TABLE = 'pp_tool_events';
+const TABLE = 'call_tool_calls';
 
 export interface LogToolEventInput {
   callId: string;

@@ -3,7 +3,7 @@ import { createLogger } from '@voxvidia/shared';
 import type { PostcallReport } from '@voxvidia/shared';
 
 const logger = createLogger('storage:postcall');
-const TABLE = 'pp_postcall_reports';
+const TABLE = 'call_analysis';
 
 export interface CreateReportInput {
   callId: string;

@@ -3,7 +3,7 @@ import { createLogger } from '@voxvidia/shared';
 import type { CallRecord } from '@voxvidia/shared';
 
 const logger = createLogger('storage:calls');
-const TABLE = 'pp_calls';
+const TABLE = 'calls';
 
 export interface CreateCallInput {
   callSid: string;
