@@ -5,9 +5,18 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_KEY || '';
 
-export const supabase = (SUPABASE_URL && SUPABASE_KEY)
-  ? createClient(SUPABASE_URL, SUPABASE_KEY)
-  : null;
+let supabase: ReturnType<typeof createClient> | null = null;
+try {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log('[supabase] Connected to', SUPABASE_URL);
+  } else {
+    console.warn('[supabase] No credentials — dashboard will show empty state');
+  }
+} catch (e) {
+  console.error('[supabase] Failed to initialize:', e);
+}
+export { supabase };
 
 export async function fetchCalls() {
   if (!supabase) return [];
