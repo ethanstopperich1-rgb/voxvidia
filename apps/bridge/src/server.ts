@@ -57,14 +57,21 @@ if (env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY) {
   logger.warn('SUPABASE_URL or SUPABASE_SERVICE_KEY not set — call data will NOT be persisted');
 }
 
-/** Fire-and-forget Supabase write. Logs errors but never throws. */
-function dbWrite(label: string, fn: (sb: SupabaseClient) => Promise<any>) {
+/** Fire-and-forget Supabase write. Logs errors but never throws/crashes. */
+function dbWrite(label: string, fn: (sb: SupabaseClient) => any) {
   if (!supabase) return;
-  fn(supabase).catch((err) => {
-    logger.error(`Supabase ${label} write failed`, {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+  try {
+    const result = fn(supabase);
+    if (result && typeof result.then === 'function') {
+      result.then((res: any) => {
+        if (res?.error) logger.error(`Supabase ${label} error`, { error: res.error.message });
+      }).catch((err: any) => {
+        logger.error(`Supabase ${label} write failed`, { error: err?.message || String(err) });
+      });
+    }
+  } catch (err: any) {
+    logger.error(`Supabase ${label} sync error`, { error: err?.message || String(err) });
+  }
 }
 
 // In-memory accumulators for post-call analysis (keyed by callSid)
