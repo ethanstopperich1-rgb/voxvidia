@@ -78,27 +78,36 @@ const toolRegistry = new ToolRegistry();
 // VIP desk number — could be env var later
 const VIP_DESK_NUMBER = '+14072890294';
 
-toolRegistry.register('get_buyback_lead_context', async (args) => {
+/**
+ * Shared lead lookup logic — extracted so the greeting path can pass an
+ * AbortSignal to actually cancel the HTTP request on timeout, instead of
+ * orphaning it behind a Promise.race.
+ */
+async function lookupLead(
+  phone: string,
+  mailerCode: string | null,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
   if (!supabase) return { found: false, reason: 'database_unavailable' };
 
-  const phone = (args.caller_phone as string) || '';
-  const mailerCode = args.mailer_code as string | null;
-
-  // Normalize phone: strip non-digits, ensure E.164-ish for matching
   const digits = phone.replace(/\D/g, '');
   if (!digits && !mailerCode) return { found: false, reason: 'no_identifier' };
 
-  // Try mailer_code first (most specific), then phone
   let query = supabase.from('leads').select('*');
   if (mailerCode) {
     query = query.eq('mailer_code', mailerCode);
   } else {
-    // Match on last 10 digits to handle +1 prefix variations
     const last10 = digits.slice(-10);
     query = query.like('phone', `%${last10}`);
   }
+  query = query.eq('dealer_id', DEALER_ID).limit(1);
 
-  const { data, error } = await query.eq('dealer_id', DEALER_ID).limit(1).single();
+  // Attach AbortSignal so the HTTP request is actually cancelled on timeout
+  if (signal) {
+    query = query.abortSignal(signal);
+  }
+
+  const { data, error } = await query.single();
 
   if (error || !data) {
     logger.info('No lead found for caller', { phone, mailerCode });
@@ -115,6 +124,13 @@ toolRegistry.register('get_buyback_lead_context', async (args) => {
     still_owns_vehicle: data.still_owns_vehicle,
     callback_phone: data.callback_phone,
   };
+}
+
+toolRegistry.register('get_buyback_lead_context', async (args) => {
+  return lookupLead(
+    (args.caller_phone as string) || '',
+    (args.mailer_code as string | null),
+  );
 });
 
 toolRegistry.register('update_lead_status', async (args) => {
@@ -345,61 +361,50 @@ toolRegistry.register('transfer_to_vip_desk', async (args) => {
   }
 
   // Attempt real Twilio call transfer via REST API
-  // This updates the live call to redirect to a <Dial> TwiML that connects to VIP desk
   const accountSid = env.TWILIO_ACCOUNT_SID;
   const authToken = env.TWILIO_AUTH_TOKEN;
 
-  // The callSid is stored in the args context or we find it from the lead's last_call_sid
-  // For now, we need the callSid passed via tool context — the LLM doesn't have it,
-  // so we return the transfer instructions and let the bridge handle the redirect.
-  if (accountSid && authToken) {
-    // Find the active call for this lead to redirect
-    const leadId = args.lead_id as string | null;
-    if (leadId && supabase) {
-      const { data: leadData } = await supabase
-        .from('leads')
-        .select('last_call_sid')
-        .eq('id', leadId)
-        .single();
+  // Use the _call_sid injected by the bridge's handleToolCall — this is the
+  // active WebSocket session's callSid, which avoids the race condition where
+  // last_call_sid in the DB could point to a different call if the same lead
+  // called twice in rapid succession.
+  const activeCallSid = args._call_sid as string | undefined;
 
-      const activeCallSid = leadData?.last_call_sid;
-      if (activeCallSid) {
-        try {
-          const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-          const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Connecting you to our VIP team now.</Say><Dial timeout="30">${VIP_DESK_NUMBER}</Dial></Response>`;
+  if (accountSid && authToken && activeCallSid) {
+    try {
+      const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Connecting you to our VIP team now.</Say><Dial timeout="30">${VIP_DESK_NUMBER}</Dial></Response>`;
 
-          const res = await fetch(
-            `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${activeCallSid}.json`,
-            {
-              method: 'POST',
-              headers: {
-                'Authorization': `Basic ${basicAuth}`,
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: new URLSearchParams({ Twiml: twiml }),
-            },
-          );
+      const res = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${activeCallSid}.json`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${basicAuth}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({ Twiml: twiml }),
+        },
+      );
 
-          if (res.ok) {
-            logger.info('Twilio call transferred to VIP desk', {
-              callSid: activeCallSid,
-              vipNumber: VIP_DESK_NUMBER,
-            });
-            return {
-              transferred: true,
-              department: 'VIP Desk',
-              phone_number: VIP_DESK_NUMBER,
-              reason: args.transfer_reason,
-            };
-          }
-          const errBody = await res.text();
-          logger.error('Twilio transfer API error', { status: res.status, body: errBody });
-        } catch (err) {
-          logger.error('Twilio transfer failed', {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+      if (res.ok) {
+        logger.info('Twilio call transferred to VIP desk', {
+          callSid: activeCallSid,
+          vipNumber: VIP_DESK_NUMBER,
+        });
+        return {
+          transferred: true,
+          department: 'VIP Desk',
+          phone_number: VIP_DESK_NUMBER,
+          reason: args.transfer_reason,
+        };
       }
+      const errBody = await res.text();
+      logger.error('Twilio transfer API error', { status: res.status, body: errBody });
+    } catch (err) {
+      logger.error('Twilio transfer failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -465,8 +470,49 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// ── Rate limiter (in-memory sliding window per IP) ──────────────────────────
+const rateLimitMap = new Map<string, number[]>();
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 30;  // 30 calls per minute per IP
+
+function rateLimit(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const timestamps = rateLimitMap.get(ip) || [];
+
+  // Remove timestamps outside the window
+  const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+
+  if (recent.length >= RATE_LIMIT_MAX_REQUESTS) {
+    logger.warn('Rate limit exceeded', { ip, path: req.path, count: recent.length });
+    res.status(429).json({ error: 'Too many requests' });
+    return;
+  }
+
+  recent.push(now);
+  rateLimitMap.set(ip, recent);
+  next();
+}
+
+// Clean up stale rate limit entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, timestamps] of rateLimitMap.entries()) {
+    const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+    if (recent.length === 0) {
+      rateLimitMap.delete(ip);
+    } else {
+      rateLimitMap.set(ip, recent);
+    }
+  }
+}, 5 * 60_000);
+
 // Twilio webhooks.
-app.post('/twilio/voice', (req, res) => {
+app.post('/twilio/voice', rateLimit, (req, res) => {
   if (!validateTwilioSignature(req)) {
     logger.warn('Invalid Twilio signature on /twilio/voice');
     res.sendStatus(403);
@@ -707,6 +753,10 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             args = {};
           }
 
+          // Inject the active callSid so tools like transfer_to_vip_desk
+          // can verify they are acting on the correct call (race condition guard).
+          args._call_sid = callSid;
+
           // Execute tool via orchestrator
           const toolStartMs = Date.now();
           try {
@@ -844,7 +894,9 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
                 // punctuation followed by a space or end-of-buffer, but
                 // skip abbreviations (Mr. Mrs. Dr. St. etc.), decimals
                 // (4.1, 2.0), and time periods (A.M. P.M.).
-                const sentenceRe = /(?:(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|Inc|Ltd|a\.m|p\.m|A\.M|P\.M)\.|[0-9]+\.[0-9]+|[^.!?])+[.!?]+(?=\s|$)/g;
+                // Skip: titles (Mr. Dr.), address words (Ave. Blvd. Ste.),
+                // ordinals (1st. 2nd.), decimals (4.1), time (A.M. P.M.)
+                const sentenceRe = /(?:(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|Inc|Ltd|Ave|Blvd|Ste|Dept|Rd|Ct|Ln|Pkwy|Hwy|Apt|approx|a\.m|p\.m|A\.M|P\.M)\.|[0-9]+(?:st|nd|rd|th)\.|[0-9]+\.[0-9]+|[^.!?])+[.!?]+(?=\s|$)/g;
                 let lastMatchEnd = 0;
                 let match: RegExpExecArray | null;
                 while ((match = sentenceRe.exec(responseBuffer)) !== null) {
@@ -924,51 +976,51 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         (async () => {
           const greetingStartMs = Date.now();
           try {
-            // Race the lead lookup against a 300ms deadline so the caller
-            // never waits in silence for a slow DB query.
+            // Use AbortController so the Supabase HTTP request is actually
+            // cancelled on timeout — not orphaned like Promise.race would do.
             const LEAD_LOOKUP_TIMEOUT_MS = 300;
-            const leadResult = await Promise.race([
-              toolRunner.runTool('get_buyback_lead_context', {
-                lead_session_id: null,
-                caller_phone: fromNumber,
-                mailer_code: null,
-              }),
-              new Promise<{ success: false; data: null; latencyMs: number }>((resolve) =>
-                setTimeout(() => resolve({ success: false, data: null, latencyMs: LEAD_LOOKUP_TIMEOUT_MS }), LEAD_LOOKUP_TIMEOUT_MS),
-              ),
-            ]);
+            const abortCtl = new AbortController();
+            const timer = setTimeout(() => abortCtl.abort(), LEAD_LOOKUP_TIMEOUT_MS);
+
+            let lead: Record<string, unknown>;
+            try {
+              lead = await lookupLead(fromNumber, null, abortCtl.signal);
+            } catch (err) {
+              // AbortError is expected on timeout — treat as "no lead found"
+              lead = { found: false, reason: 'timeout' };
+            } finally {
+              clearTimeout(timer);
+            }
 
             const lookupMs = Date.now() - greetingStartMs;
-            if (leadResult.success && leadResult.data) {
-              const lead = leadResult.data as Record<string, unknown>;
-              if (lead.found !== false && lead.customer_name) {
-                // Rebuild system prompt with lead data
-                buildPromptOpts.callerName = String(lead.customer_name);
-                buildPromptOpts.vehicleInfo = lead.vehicle ? String(lead.vehicle) : undefined;
-                buildPromptOpts.contactId = lead.lead_id ? String(lead.lead_id) : undefined;
-                const enrichedPrompt = buildSystemPrompt(buildPromptOpts);
-                session.llmMessages = [{ role: 'system', content: enrichedPrompt }];
-                logger.info('Lead context loaded for greeting', {
-                  callId: callSid,
-                  name: lead.customer_name,
-                  vehicle: lead.vehicle,
-                  lookupMs,
-                });
+            if (lead.found !== false && lead.customer_name) {
+              // Rebuild system prompt with lead data
+              buildPromptOpts.callerName = String(lead.customer_name);
+              buildPromptOpts.vehicleInfo = lead.vehicle ? String(lead.vehicle) : undefined;
+              buildPromptOpts.contactId = lead.lead_id ? String(lead.lead_id) : undefined;
+              const enrichedPrompt = buildSystemPrompt(buildPromptOpts);
+              session.llmMessages = [{ role: 'system', content: enrichedPrompt }];
+              logger.info('Lead context loaded for greeting', {
+                callId: callSid,
+                name: lead.customer_name,
+                vehicle: lead.vehicle,
+                lookupMs,
+              });
 
-                // Stamp the active callSid on the lead so transfer_to_vip_desk can find it
-                if (supabase && lead.lead_id) {
-                  dbWrite('leads.stamp_call_sid', (sb) =>
-                    sb.from('leads').update({
-                      last_call_sid: callSid,
-                      last_contacted_at: new Date().toISOString(),
-                    }).eq('id', String(lead.lead_id)),
-                  );
-                }
+              // Stamp the active callSid on the lead so transfer_to_vip_desk can find it
+              if (supabase && lead.lead_id) {
+                dbWrite('leads.stamp_call_sid', (sb) =>
+                  sb.from('leads').update({
+                    last_call_sid: callSid,
+                    last_contacted_at: new Date().toISOString(),
+                  }).eq('id', String(lead.lead_id)),
+                );
               }
             } else {
-              logger.info('Lead lookup skipped or timed out, using generic greeting', {
+              logger.info('Lead lookup missed or timed out, using generic greeting', {
                 callId: callSid,
                 lookupMs,
+                reason: lead.reason,
               });
             }
           } catch (err) {
@@ -1191,6 +1243,19 @@ const PORT = env.PORT;
 server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Voxvidia bridge running on port ${PORT}`);
   logger.info('Stack: Deepgram Nova-3 + GPT-4.1 mini + Rime Mist v3');
+
+  // ── Keep-alive self-ping (prevents Render cold starts) ──────────────────
+  // Render's starter tier spins down after 15 min idle. A voice call hitting
+  // a cold-started server means 5-30s of dead air — fatal for phone UX.
+  if (env.NODE_ENV === 'production') {
+    const KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000; // 4 minutes
+    setInterval(() => {
+      fetch(`http://0.0.0.0:${PORT}/health`).catch(() => {
+        // Ignore errors — this is just a keep-alive
+      });
+    }, KEEP_ALIVE_INTERVAL_MS);
+    logger.info('Keep-alive self-ping enabled (every 4 min)');
+  }
 });
 
 // ── Process error handlers ────────────────────────────────────────────────────
@@ -1211,31 +1276,67 @@ process.on('unhandledRejection', (reason: unknown) => {
   });
 });
 
-// Graceful shutdown.
+// Graceful shutdown with active call draining.
+let isShuttingDown = false;
+
 const shutdown = (signal: string) => {
-  logger.info(`Received ${signal}, shutting down gracefully`);
+  if (isShuttingDown) return; // Prevent double-shutdown
+  isShuttingDown = true;
 
-  // Close all active Deepgram + Rime connections.
-  for (const session of sessions.all()) {
-    session.deepgramConn?.close();
-    session.rimeConn?.close();
-    session.transcript.flush();
-    sessions.end(session.callSid);
-  }
+  const activeCalls = sessions.count;
+  logger.info(`Received ${signal}, shutting down gracefully`, { activeCalls });
 
-  // Close the WebSocket server.
+  // 1. Stop accepting new WebSocket connections immediately.
   wss.close(() => {
-    server.close(() => {
-      logger.info('Server shut down');
-      process.exit(0);
-    });
+    logger.info('WebSocket server closed to new connections');
   });
 
-  // Force exit after 10 seconds.
+  // 2. Stop accepting new HTTP requests.
+  server.close(() => {
+    logger.info('HTTP server closed to new requests');
+  });
+
+  // 3. If no active calls, exit immediately.
+  if (activeCalls === 0) {
+    logger.info('No active calls, exiting now');
+    process.exit(0);
+  }
+
+  // 4. Wait for active calls to finish (up to 30s drain window).
+  const DRAIN_TIMEOUT_MS = 30_000;
+  const drainStart = Date.now();
+
+  const drainCheck = setInterval(() => {
+    const remaining = sessions.count;
+    const elapsed = Date.now() - drainStart;
+
+    if (remaining === 0) {
+      clearInterval(drainCheck);
+      logger.info('All calls drained, exiting');
+      process.exit(0);
+    }
+
+    if (elapsed > DRAIN_TIMEOUT_MS) {
+      clearInterval(drainCheck);
+      logger.warn(`Drain timeout after ${DRAIN_TIMEOUT_MS}ms — force-closing ${remaining} active calls`);
+
+      // Force-close remaining sessions
+      for (const session of sessions.all()) {
+        session.deepgramConn?.close();
+        session.rimeConn?.close();
+        session.transcript.flush();
+        sessions.end(session.callSid);
+      }
+
+      process.exit(0);
+    }
+  }, 500);
+
+  // 5. Hard kill safety net (shouldn't be reached).
   setTimeout(() => {
-    logger.warn('Forced shutdown after timeout');
+    logger.error('Hard kill after 45s — something prevented graceful drain');
     process.exit(1);
-  }, 10_000);
+  }, 45_000).unref();
 };
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
