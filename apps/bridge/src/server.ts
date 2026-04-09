@@ -127,10 +127,23 @@ async function lookupLead(
 }
 
 toolRegistry.register('get_buyback_lead_context', async (args) => {
-  return lookupLead(
-    (args.caller_phone as string) || '',
-    (args.mailer_code as string | null),
-  );
+  // Tool-handler path gets a 5s timeout (longer than greeting's 300ms
+  // since the caller hears a filler phrase while this runs). Without any
+  // timeout, a hung Supabase query would stall the LLM turn forever.
+  const TOOL_LOOKUP_TIMEOUT_MS = 5_000;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TOOL_LOOKUP_TIMEOUT_MS);
+  try {
+    return await lookupLead(
+      (args.caller_phone as string) || '',
+      (args.mailer_code as string | null),
+      ctl.signal,
+    );
+  } catch {
+    return { found: false, reason: 'timeout' };
+  } finally {
+    clearTimeout(timer);
+  }
 });
 
 toolRegistry.register('update_lead_status', async (args) => {
@@ -526,7 +539,12 @@ app.post('/twilio/voice', rateLimit, (req, res) => {
   });
 });
 
-app.post('/twilio/status', (req, res) => {
+app.post('/twilio/status', rateLimit, (req, res) => {
+  if (!validateTwilioSignature(req)) {
+    logger.warn('Invalid Twilio signature on /twilio/status');
+    res.sendStatus(403);
+    return;
+  }
   handleCallStatus(req, res).catch((err) => {
     logger.error('handleCallStatus error', {
       error: err instanceof Error ? err.message : String(err),
@@ -535,7 +553,12 @@ app.post('/twilio/status', (req, res) => {
   });
 });
 
-app.post('/twilio/recording-status', (req, res) => {
+app.post('/twilio/recording-status', rateLimit, (req, res) => {
+  if (!validateTwilioSignature(req)) {
+    logger.warn('Invalid Twilio signature on /twilio/recording-status');
+    res.sendStatus(403);
+    return;
+  }
   handleRecordingStatus(req, res).catch((err) => {
     logger.error('handleRecordingStatus error', {
       error: err instanceof Error ? err.message : String(err),
@@ -895,8 +918,8 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
                 // skip abbreviations (Mr. Mrs. Dr. St. etc.), decimals
                 // (4.1, 2.0), and time periods (A.M. P.M.).
                 // Skip: titles (Mr. Dr.), address words (Ave. Blvd. Ste.),
-                // ordinals (1st. 2nd.), decimals (4.1), time (A.M. P.M.)
-                const sentenceRe = /(?:(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|Inc|Ltd|Ave|Blvd|Ste|Dept|Rd|Ct|Ln|Pkwy|Hwy|Apt|approx|a\.m|p\.m|A\.M|P\.M)\.|[0-9]+(?:st|nd|rd|th)\.|[0-9]+\.[0-9]+|[^.!?])+[.!?]+(?=\s|$)/g;
+                // ordinals (1st. 2nd.), decimals (4.1), time (A.M. P.M.), No.
+                const sentenceRe = /(?:(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|Inc|Ltd|Ave|Blvd|Ste|Dept|Rd|Ct|Ln|Pkwy|Hwy|Apt|approx|No|a\.m|p\.m|A\.M|P\.M)\.|[0-9]+(?:st|nd|rd|th)\.|[0-9]+\.[0-9]+|[^.!?])+[.!?]+(?=\s|$)/gi;
                 let lastMatchEnd = 0;
                 let match: RegExpExecArray | null;
                 while ((match = sentenceRe.exec(responseBuffer)) !== null) {
@@ -1239,6 +1262,7 @@ interface TwilioMediaMessage {
 // ── Start server ──────────────────────────────────────────────────────────────
 
 const PORT = env.PORT;
+let keepAliveTimer: ReturnType<typeof setInterval> | undefined;
 
 server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Voxvidia bridge running on port ${PORT}`);
@@ -1249,7 +1273,7 @@ server.listen(PORT, '0.0.0.0', () => {
   // a cold-started server means 5-30s of dead air — fatal for phone UX.
   if (env.NODE_ENV === 'production') {
     const KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000; // 4 minutes
-    setInterval(() => {
+    keepAliveTimer = setInterval(() => {
       fetch(`http://0.0.0.0:${PORT}/health`).catch(() => {
         // Ignore errors — this is just a keep-alive
       });
@@ -1282,6 +1306,12 @@ let isShuttingDown = false;
 const shutdown = (signal: string) => {
   if (isShuttingDown) return; // Prevent double-shutdown
   isShuttingDown = true;
+
+  // Clear keep-alive timer so it doesn't block clean process exit
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = undefined;
+  }
 
   const activeCalls = sessions.count;
   logger.info(`Received ${signal}, shutting down gracefully`, { activeCalls });
