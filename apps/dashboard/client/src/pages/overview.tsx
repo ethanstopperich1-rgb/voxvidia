@@ -18,6 +18,7 @@ export default function Overview() {
   const [callVolumeByHour, setCallVolume] = useState<any[]>([]);
   const [activityFeed, setActivity] = useState<any[]>([]);
   const [conversionFunnel] = useState(mockFunnel);
+  const campaignSummary: any[] = [];
 
   useEffect(() => {
     import("@/lib/supabase").then(({ fetchOverviewStats, fetchActivityFeed }) => {
