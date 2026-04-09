@@ -17,6 +17,7 @@
  */
 
 import http from 'node:http';
+import crypto from 'node:crypto';
 import express from 'express';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -222,6 +223,37 @@ toolRegistry.register('book_appraisal_appointment', async (args) => {
   if (meridiem === 'am' && hour === 12) hour = 0;
   const timeStr = `${String(hour).padStart(2, '0')}:00:00`;
 
+  // Idempotency: check if this lead already has a confirmed appointment for this slot
+  const { data: existing } = await supabase
+    .from('appointments')
+    .select('id, confirmation_code')
+    .eq('lead_id', leadId)
+    .eq('appointment_date', dateStr)
+    .eq('appointment_time', timeStr)
+    .eq('status', 'confirmed')
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    logger.info('Duplicate booking prevented — returning existing appointment', {
+      leadId, confirmation: existing.confirmation_code,
+    });
+    // Return the existing appointment instead of creating a duplicate
+    const displayHourExisting = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+    const displayMeridiemExisting = hour >= 12 ? 'PM' : 'AM';
+    const existingDate = new Date(dateStr + 'T12:00:00');
+    const dNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const mNames = ['January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'];
+    return {
+      booked: true,
+      confirmation: existing.confirmation_code,
+      date: `${dNames[existingDate.getDay()]}, ${mNames[existingDate.getMonth()]} ${existingDate.getDate()}`,
+      time: `${displayHourExisting}:00 ${displayMeridiemExisting}`,
+      duration: '15 minutes',
+    };
+  }
+
   const confirmationCode = 'VX-' + Date.now().toString().slice(-6);
 
   const { error } = await supabase.from('appointments').insert({
@@ -312,12 +344,77 @@ toolRegistry.register('transfer_to_vip_desk', async (args) => {
     });
   }
 
-  // TODO: Implement real Twilio <Dial> to VIP queue
+  // Attempt real Twilio call transfer via REST API
+  // This updates the live call to redirect to a <Dial> TwiML that connects to VIP desk
+  const accountSid = env.TWILIO_ACCOUNT_SID;
+  const authToken = env.TWILIO_AUTH_TOKEN;
+
+  // The callSid is stored in the args context or we find it from the lead's last_call_sid
+  // For now, we need the callSid passed via tool context — the LLM doesn't have it,
+  // so we return the transfer instructions and let the bridge handle the redirect.
+  if (accountSid && authToken) {
+    // Find the active call for this lead to redirect
+    const leadId = args.lead_id as string | null;
+    if (leadId && supabase) {
+      const { data: leadData } = await supabase
+        .from('leads')
+        .select('last_call_sid')
+        .eq('id', leadId)
+        .single();
+
+      const activeCallSid = leadData?.last_call_sid;
+      if (activeCallSid) {
+        try {
+          const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+          const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say>Connecting you to our VIP team now.</Say><Dial timeout="30">${VIP_DESK_NUMBER}</Dial></Response>`;
+
+          const res = await fetch(
+            `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${activeCallSid}.json`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Basic ${basicAuth}`,
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: new URLSearchParams({ Twiml: twiml }),
+            },
+          );
+
+          if (res.ok) {
+            logger.info('Twilio call transferred to VIP desk', {
+              callSid: activeCallSid,
+              vipNumber: VIP_DESK_NUMBER,
+            });
+            return {
+              transferred: true,
+              department: 'VIP Desk',
+              phone_number: VIP_DESK_NUMBER,
+              reason: args.transfer_reason,
+            };
+          }
+          const errBody = await res.text();
+          logger.error('Twilio transfer API error', { status: res.status, body: errBody });
+        } catch (err) {
+          logger.error('Twilio transfer failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+  }
+
+  // Fallback: log-only transfer (Twilio creds missing or call not found)
+  logger.warn('Transfer logged but not executed — Twilio redirect unavailable', {
+    leadId: args.lead_id,
+    reason: args.transfer_reason,
+  });
   return {
-    transferred: true,
+    transferred: false,
+    transfer_logged: true,
     department: 'VIP Desk',
     phone_number: VIP_DESK_NUMBER,
     reason: args.transfer_reason,
+    note: 'Transfer was logged. A team member will follow up shortly.',
   };
 });
 
@@ -409,13 +506,30 @@ function requireApiSecret(
 ): void {
   const secret = env.VOXVIDIA_API_SECRET;
   if (!secret) {
-    // If no secret is configured, allow the request (dev mode)
+    // Fail-closed in production — only allow open access in development
+    if (env.NODE_ENV === 'production') {
+      logger.error('VOXVIDIA_API_SECRET not set in production — blocking request');
+      res.status(503).json({ error: 'Service misconfigured' });
+      return;
+    }
+    logger.warn('VOXVIDIA_API_SECRET not set — allowing request (dev mode)');
     next();
     return;
   }
   const authHeader = req.headers.authorization;
-  if (!authHeader || authHeader !== `Bearer ${secret}`) {
-    logger.warn('Unauthorized API request', { path: req.path, ip: req.ip });
+  if (!authHeader) {
+    logger.warn('Missing Authorization header', { path: req.path, ip: req.ip });
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  // Extract bearer token and use constant-time comparison
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const tokenBuf = Buffer.from(token);
+  const secretBuf = Buffer.from(secret);
+
+  if (tokenBuf.length !== secretBuf.length || !crypto.timingSafeEqual(tokenBuf, secretBuf)) {
+    logger.warn('Invalid API secret', { path: req.path, ip: req.ip });
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
@@ -716,14 +830,21 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
             session.llmMessages.push({ role: 'user', content: fullUtterance });
 
             // Get LLM response
+            const llmResponseStartMs = Date.now();
+            let firstTokenMs: number | null = null;
             let responseBuffer = '';
             await streamChatCompletion(env.OPENAI_API_KEY || '', session.llmMessages, {
               onToken: (token) => {
+                if (firstTokenMs === null) {
+                  firstTokenMs = Date.now() - llmResponseStartMs;
+                }
                 responseBuffer += token;
                 // Send complete sentences to Rime for synthesis.
-                // Match all sentences ending with punctuation; the remainder
-                // is everything after the last matched sentence.
-                const sentenceRe = /[^.!?]+[.!?]+/g;
+                // Sentence-split for TTS. Match sentences ending with
+                // punctuation followed by a space or end-of-buffer, but
+                // skip abbreviations (Mr. Mrs. Dr. St. etc.), decimals
+                // (4.1, 2.0), and time periods (A.M. P.M.).
+                const sentenceRe = /(?:(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|Inc|Ltd|a\.m|p\.m|A\.M|P\.M)\.|[0-9]+\.[0-9]+|[^.!?])+[.!?]+(?=\s|$)/g;
                 let lastMatchEnd = 0;
                 let match: RegExpExecArray | null;
                 while ((match = sentenceRe.exec(responseBuffer)) !== null) {
@@ -742,7 +863,13 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
                   rimeConn.speak(responseBuffer.trim());
                 }
                 session.llmMessages.push({ role: 'assistant', content: fullText });
-                logger.info('Agent said', { callId: callSid, text: fullText });
+                const totalResponseMs = Date.now() - llmResponseStartMs;
+                logger.info('Agent said', {
+                  callId: callSid,
+                  text: fullText,
+                  firstTokenMs,
+                  totalResponseMs,
+                });
 
                 // Write agent transcript to Supabase (fire-and-forget)
                 const startTs2 = callStartTimes.get(callSid!) || Date.now();
@@ -793,16 +920,25 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
         }, callSid!);
         session.deepgramConn = deepgramConn;
 
-        // 8. Lookup lead context first, then generate AI greeting
+        // 8. Lookup lead context first (with 300ms hard timeout), then generate AI greeting
         (async () => {
+          const greetingStartMs = Date.now();
           try {
-            // Attempt lead lookup before generating the greeting
-            const leadResult = await toolRunner.runTool('get_buyback_lead_context', {
-              lead_session_id: null,
-              caller_phone: fromNumber,
-              mailer_code: null,
-            });
+            // Race the lead lookup against a 300ms deadline so the caller
+            // never waits in silence for a slow DB query.
+            const LEAD_LOOKUP_TIMEOUT_MS = 300;
+            const leadResult = await Promise.race([
+              toolRunner.runTool('get_buyback_lead_context', {
+                lead_session_id: null,
+                caller_phone: fromNumber,
+                mailer_code: null,
+              }),
+              new Promise<{ success: false; data: null; latencyMs: number }>((resolve) =>
+                setTimeout(() => resolve({ success: false, data: null, latencyMs: LEAD_LOOKUP_TIMEOUT_MS }), LEAD_LOOKUP_TIMEOUT_MS),
+              ),
+            ]);
 
+            const lookupMs = Date.now() - greetingStartMs;
             if (leadResult.success && leadResult.data) {
               const lead = leadResult.data as Record<string, unknown>;
               if (lead.found !== false && lead.customer_name) {
@@ -816,8 +952,24 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
                   callId: callSid,
                   name: lead.customer_name,
                   vehicle: lead.vehicle,
+                  lookupMs,
                 });
+
+                // Stamp the active callSid on the lead so transfer_to_vip_desk can find it
+                if (supabase && lead.lead_id) {
+                  dbWrite('leads.stamp_call_sid', (sb) =>
+                    sb.from('leads').update({
+                      last_call_sid: callSid,
+                      last_contacted_at: new Date().toISOString(),
+                    }).eq('id', String(lead.lead_id)),
+                  );
+                }
               }
+            } else {
+              logger.info('Lead lookup skipped or timed out, using generic greeting', {
+                callId: callSid,
+                lookupMs,
+              });
             }
           } catch (err) {
             logger.warn('Lead lookup failed before greeting, using generic opener', {
@@ -827,14 +979,22 @@ wss.on('connection', (twilioWs: WebSocket, req) => {
           }
 
           // Generate greeting (with or without lead context)
+          const llmStartMs = Date.now();
           try {
             await streamChatCompletion(env.OPENAI_API_KEY || '', session.llmMessages.slice(), {
               onToken: () => {},
               onToolCall: handleToolCall,
               onDone: (greeting) => {
+                const totalGreetingMs = Date.now() - greetingStartMs;
+                const llmMs = Date.now() - llmStartMs;
                 speakText(greeting);
                 session.llmMessages.push({ role: 'assistant', content: greeting });
-                logger.info('AI greeting', { callId: callSid, text: greeting });
+                logger.info('AI greeting', {
+                  callId: callSid,
+                  text: greeting,
+                  totalGreetingMs,
+                  llmMs,
+                });
               },
               onError: () => {
                 speakText("Hi, thanks for calling. How can I help you today?");

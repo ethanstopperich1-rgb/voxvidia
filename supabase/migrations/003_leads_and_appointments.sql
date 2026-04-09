@@ -65,6 +65,11 @@ CREATE INDEX idx_appointments_lead ON appointments(lead_id);
 CREATE INDEX idx_appointments_date ON appointments(dealer_id, appointment_date, appointment_time);
 CREATE INDEX idx_appointments_confirmation ON appointments(confirmation_code);
 
+-- Idempotency: prevent duplicate confirmed bookings for the same lead + slot
+CREATE UNIQUE INDEX idx_appointments_idempotent
+  ON appointments(lead_id, appointment_date, appointment_time)
+  WHERE status = 'confirmed';
+
 -- ── Transfer Log ───────────────────────────────────────────────────────────
 CREATE TABLE transfer_log (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
